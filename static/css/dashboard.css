@@ -450,6 +450,15 @@ footer {
 .lesson-content li { margin: 3px 0; color: var(--text-dim); }
 .lesson-content strong { color: var(--text); }
 .lesson-content .loading { color: var(--text-dim); font-style: italic; }
+.lesson-content hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.lesson-content blockquote { border-left: 3px solid var(--cyan-faint); margin: 8px 0; padding: 4px 12px; color: var(--text-dim); font-style: italic; }
+.lesson-content table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+.lesson-content th { background: var(--bg-elevated); color: var(--text); padding: 6px 10px; text-align: left; border: 1px solid var(--border); }
+.lesson-content td { padding: 5px 10px; border: 1px solid var(--border); color: var(--text-dim); }
+.lesson-content code { background: var(--bg-elevated); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono); font-size: 12px; color: var(--cyan); }
+.lesson-content pre { background: var(--bg-elevated); padding: 12px; border-radius: var(--radius-sm); overflow-x: auto; margin: 8px 0; }
+.lesson-content pre code { background: none; padding: 0; color: var(--text-dim); }
+.lesson-content a { color: var(--cyan); }
 
 /* ── responsive ─────────────────────────────────────────────── */
 @media (max-width: 900px) {
