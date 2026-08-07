@@ -25,7 +25,6 @@ from fastapi.staticfiles import StaticFiles
 APP_DIR = Path(__file__).parent
 STATIC = APP_DIR / "static"
 OBSIDIAN_CURRICULUM = Path.home() / "Obsidian" / "Curriculum"
-OBSIDIAN_ROAMINGS = Path.home() / "Obsidian" / "Satya's Roamings"
 OBSIDIAN_DAILY = Path.home() / "Obsidian" / "15-Daily-Notes"
 WHOOP_DB = Path.home() / "whoop-sync" / "health.db"
 EDORAS_REPO = Path.home() / "edoras"
@@ -201,6 +200,19 @@ def gyani_lessons():
     return {"lessons": lessons}
 
 
+@app.get("/api/gyani/lesson")
+def gyani_lesson_content(path: str = Query(..., description="Relative path from home, e.g. Obsidian/Curriculum/finance/2026-08-07-black-scholes.md")):
+    """Serve raw lesson markdown content for in-page viewing."""
+    full_path = Path.home() / path
+    if not full_path.exists() or not full_path.is_relative_to(Path.home()):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        content = full_path.read_text()
+        return {"path": path, "content": content, "size": len(content)}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/gyani/verifications")
 def gyani_verifications():
     """Pending + verified lessons from Atma tasks with lesson links."""
@@ -285,8 +297,8 @@ def gyani_verifications():
 
 @app.get("/api/gyani/habits")
 def gyani_habits():
-    """7-day habit grid: workout, roaming, reading, shipping."""
-    habits = {"workout": [], "roaming": [], "reading": [], "shipping": []}
+    """7-day habit grid: workout, reading, shipping."""
+    habits = {"workout": [], "reading": [], "shipping": []}
     today = date.today()
     # Workout — last 7 days from WHOOP
     if WHOOP_DB.exists():
@@ -306,16 +318,6 @@ def gyani_habits():
     else:
         for i in range(6, -1, -1):
             habits["workout"].append({"date": (today - timedelta(days=i)).isoformat(), "done": False})
-
-    # Roaming — any .md file in Satya's Roamings/ per day
-    roaming_days = set()
-    if OBSIDIAN_ROAMINGS.exists():
-        for f in OBSIDIAN_ROAMINGS.glob("*.md"):
-            d = date.fromtimestamp(f.stat().st_mtime).isoformat()
-            roaming_days.add(d)
-    for i in range(6, -1, -1):
-        d = (today - timedelta(days=i)).isoformat()
-        habits["roaming"].append({"date": d, "done": d in roaming_days})
 
     # Reading — check all daily notes in the 7-day window
     reading_days = set()

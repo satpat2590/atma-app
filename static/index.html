@@ -93,6 +93,15 @@
   <footer id="foot"></footer>
 </div>
 
+<!-- LESSON VIEWER MODAL -->
+<div id="lesson-modal" style="display:none">
+  <div class="lesson-modal-backdrop" onclick="closeLesson()"></div>
+  <div class="lesson-modal-content">
+    <button class="lesson-modal-close" onclick="closeLesson()">&times;</button>
+    <div id="lesson-modal-body"></div>
+  </div>
+</div>
+
 <script>
 /* ── helpers ─────────────────────────────────────────────────── */
 const esc = s => String(s ?? '-').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -203,7 +212,7 @@ function renderLessons(data) {
     return `<div class="lesson-item">
       <div class="lesson-icon ${esc(l.domain)}">${icon}</div>
       <div class="lesson-info">
-        <a class="lesson-title" href="obsidian://open?path=${encodeURIComponent(l.path || '')}" title="Open in Obsidian">${esc(l.title)}</a>
+        <a class="lesson-title" href="#" onclick="viewLesson('${esc(l.path || '')}');return false" title="View lesson">${esc(l.title)}</a>
         <div class="lesson-meta">${esc(l.domain)} · ${relDate(l.date)} · ${l.size_kb ?? 0} KB</div>
       </div>
     </div>`;
@@ -270,7 +279,7 @@ function renderHabits(data) {
   }
   const habits = data.habits || {};
   const LABELS = {
-    workout: 'workout', roaming: 'roaming', reading: 'reading', shipping: 'shipping'
+    workout: 'workout', reading: 'reading', shipping: 'shipping'
   };
   const today = new Date().toISOString().slice(0, 10);
 
@@ -300,7 +309,7 @@ function renderHabits(data) {
   }).join('');
 
   const totalDone = Object.values(habits).flat().filter(d => d.done).length;
-  count.textContent = totalDone + '/28 done';
+  count.textContent = totalDone + '/21 done';
 
   body.className = 'panel-body';
   body.innerHTML = rows + '<div class="habit-day-labels">' + dayLabels + '</div>';
@@ -351,6 +360,38 @@ function renderAlignment(data) {
 function renderFooter() {
   document.getElementById('foot').textContent =
     'atma.omnisatya.cc' + (new Date().toLocaleTimeString() ? ' · ' + new Date().toLocaleTimeString() : '');
+}
+
+/* ── lesson viewer ────────────────────────────────────────────── */
+async function viewLesson(path) {
+  const modal = document.getElementById('lesson-modal');
+  const body = document.getElementById('lesson-modal-body');
+  modal.style.display = 'flex';
+  body.innerHTML = '<div class="loading">loading lesson…</div>';
+  try {
+    const resp = await fetch('/api/gyani/lesson?path=' + encodeURIComponent(path));
+    if (!resp.ok) { body.innerHTML = '<div class="panel-error">lesson not found</div>'; return; }
+    const data = await resp.json();
+    // Simple markdown-to-HTML: headers, bold, lists, paragraphs
+    let html = data.content
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^- (.+)$/gm, '<li>$1</li>')
+      .replace(/<\/li>\n<li>/g, '</li><li>')
+      .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/^(.+)$/gm, '<p>$1</p>')
+      .replace(/<p><h[123]>/g, '<$1>').replace(/<\/h[123]><\/p>/g, '</$1>')
+      .replace(/<p><ul>/g, '<ul>').replace(/<\/ul><\/p>/g, '</ul>');
+    body.innerHTML = '<div class="lesson-content">' + html + '</div>';
+  } catch(e) {
+    body.innerHTML = '<div class="panel-error">failed to load</div>';
+  }
+}
+function closeLesson() {
+  document.getElementById('lesson-modal').style.display = 'none';
 }
 
 /* ── main load + render ──────────────────────────────────────── */
