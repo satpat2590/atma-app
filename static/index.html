@@ -171,7 +171,7 @@ function renderGrowth(g) {
     const cls = score >= 1.0 ? 'green' : score >= 0.4 ? 'amber' : 'red';
     return `<div class="domain-card">
       <div class="dc-label">${esc(n)}</div>
-      <div class="dc-score ${cls}">${signed(d.growth_score)}</div>
+      <div class="dc-score ${cls}">${(d.growth_score ?? 0).toFixed(2)}</div>
       <div class="dc-meta">${d.completed_28d ?? 0} completions · ${d.tasks ?? 0} tasks</div>
     </div>`;
   }).join('');

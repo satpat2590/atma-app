@@ -55,18 +55,6 @@ def _supabase_url():
     return None
 
 
-def _whoop_query(sql, args=()):
-    """Run a query against the local WHOOP SQLite database."""
-    if not WHOOP_DB.exists():
-        return None
-    con = sqlite3.connect(str(WHOOP_DB))
-    con.row_factory = sqlite3.Row
-    try:
-        return [dict(r) for r in con.execute(sql, args).fetchall()]
-    finally:
-        con.close()
-
-
 def _score_color(score: float) -> str:
     if score >= 1.0:
         return "green"
@@ -153,7 +141,7 @@ def gyani_lessons():
         for domain_dir in sorted(OBSIDIAN_CURRICULUM.iterdir()):
             if not domain_dir.is_dir() or domain_dir.name.startswith("."):
                 continue
-            for md_file in sorted(domain_dir.glob("*.md"), reverse=True):
+            for md_file in sorted(domain_dir.glob("*.md"), reverse=True)[:50]:
                 if md_file.name.startswith("gyani-"):
                     continue
                 stat = md_file.stat()
@@ -293,14 +281,14 @@ def gyani_alignment():
     """Latest alignment report summary."""
     reports = []
     if ALIGNMENT_DIR.exists():
-        for f in sorted(ALIGNMENT_DIR.glob("*.md"), reverse=True):
+        latest = sorted(ALIGNMENT_DIR.glob("*.md"), reverse=True)
+        if latest:
+            f = latest[0]
             reports.append({
                 "path": str(f.relative_to(Path.home())),
                 "date": f.stem,
                 "preview": f.read_text()[:500] if f.stat().st_size < 10000 else f.read_text()[:200] + "...",
             })
-            if reports:
-                break  # Only latest
     return {"reports": reports}
 
 
@@ -391,6 +379,18 @@ def mindmap_data():
     if GRAPH_JSON.exists():
         return FileResponse(GRAPH_JSON)
     return JSONResponse({"error": "graph not generated"}, status_code=503)
+
+
+# ── Health ──────────────────────────────────────────────────
+
+@app.get("/api/health")
+def health():
+    """Service health check."""
+    return {
+        "status": "ok",
+        "service": "atma-dashboard",
+        "version": "1.0.0",
+    }
 
 
 # ── Static Files ─────────────────────────────────────────────
