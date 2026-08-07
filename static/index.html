@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atma — dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%2358a6ff'/></svg>">
+<link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ─── HEADER ─────────────────────────────────── -->
+  <header id="header">
+    <h1>
+      <span class="accent">Atma</span>
+      <span class="verified" id="header-verified">—</span>
+    </h1>
+    <div class="meta" id="header-date"></div>
+  </header>
+
+  <!-- ─── ROW 1: GROWTH (left) + LESSONS (right) ─── -->
+  <div class="dashboard-grid">
+    <div class="dashboard-col">
+
+      <!-- GROWTH PANEL -->
+      <div class="panel" id="growth-panel">
+        <div class="panel-header">
+          growth · 28d
+          <span class="ph-count" id="growth-count"></span>
+        </div>
+        <div class="panel-body loading" id="growth-body">loading…</div>
+      </div>
+
+      <!-- MINDMAP PANEL -->
+      <div class="panel" id="mindmap-panel">
+        <div class="panel-header mm-bar">
+          mindmap
+          <a href="/mindmap" target="_blank">open full ↪</a>
+        </div>
+        <div class="panel-body">
+          <iframe src="/mindmap" title="Omni Growth Mindmap"></iframe>
+        </div>
+      </div>
+
+    </div>
+    <div class="dashboard-col">
+
+      <!-- GYANI LESSONS -->
+      <div class="panel" id="lessons-panel">
+        <div class="panel-header">
+          gyani · lessons
+          <span class="ph-count" id="lessons-count"></span>
+        </div>
+        <div class="panel-body loading" id="lessons-body">loading…</div>
+      </div>
+
+      <!-- VERIFICATION QUEUE -->
+      <div class="panel" id="verif-panel">
+        <div class="panel-header">
+          verification queue
+          <span class="ph-count" id="verif-count"></span>
+        </div>
+        <div class="panel-body loading" id="verif-body">loading…</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── ROW 2: HABITS + ALIGNMENT ───────────────── -->
+  <div class="bottom-row">
+
+    <!-- HABIT GRID -->
+    <div class="panel" id="habits-panel">
+      <div class="panel-header">
+        habits · 7d
+        <span class="ph-count" id="habits-count"></span>
+      </div>
+      <div class="panel-body loading" id="habits-body">loading…</div>
+    </div>
+
+    <!-- ALIGNMENT DELTA -->
+    <div class="panel" id="alignment-panel">
+      <div class="panel-header">
+        alignment · latest
+        <span class="ph-count" id="alignment-date"></span>
+      </div>
+      <div class="panel-body loading" id="alignment-body">loading…</div>
+    </div>
+
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+/* ── helpers ─────────────────────────────────────────────────── */
+const esc = s => String(s ?? '-').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const signed = (v, d = 2) => v == null ? '-' : (v > 0 ? '+' : '') + (+v).toFixed(d).replace(/\.?0+$/, m => m.includes('.') ? '' : m);
+
+const DAY_NAMES = ['sun','mon','tue','wed','thu','fri','sat'];
+
+function relDate(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso.split('T')[0]);
+  const now = new Date();
+  const diff = Math.floor((now - d) / 864e5);
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'yesterday';
+  if (diff < 7) return diff + 'd ago';
+  if (diff < 30) return Math.floor(diff / 7) + 'w ago';
+  return iso.slice(0, 10);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.slice(0, 10) + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+const DOMAIN_ICONS = {
+  physical: '🏋️', mental: '🧠', financial: '💰', social: '🤝',
+  fitness: '🏋️', health: '❤️', edoras: '📈'
+};
+
+/* ── API fetch ───────────────────────────────────────────────── */
+async function jget(url) {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return { _error: 'HTTP ' + r.status };
+    return await r.json();
+  } catch (e) {
+    return { _error: e.message };
+  }
+}
+
+/* ── PANEL: Header ───────────────────────────────────────────── */
+function renderHeader(g) {
+  const t = (g && g.today) || {};
+  const v = t.verified ?? 0;
+  const tot = t.daily_total ?? 0;
+  document.getElementById('header-verified').textContent =
+    tot ? v + '/' + tot + ' verified ✓' : '—';
+  document.getElementById('header-date').textContent =
+    new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+/* ── PANEL: Growth ───────────────────────────────────────────── */
+function renderGrowth(g) {
+  const body = document.getElementById('growth-body');
+  const count = document.getElementById('growth-count');
+  if (!g || g._error || g.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'growth data unavailable';
+    count.textContent = '';
+    return;
+  }
+  const doms = g.domains || {};
+  const names = ['physical', 'mental', 'financial', 'social'].filter(n => doms[n]);
+  if (!names.length) {
+    body.className = 'panel-body empty';
+    body.textContent = 'no domain data yet';
+    return;
+  }
+  const total = Object.values(doms).reduce((s, d) => s + (d.tasks || 0), 0);
+  count.textContent = total + ' tasks · 4 domains';
+
+  const cards = names.map(n => {
+    const d = doms[n];
+    const score = d.growth_score ?? 0;
+    const cls = score >= 1.0 ? 'green' : score >= 0.4 ? 'amber' : 'red';
+    return `<div class="domain-card">
+      <div class="dc-label">${esc(n)}</div>
+      <div class="dc-score ${cls}">${signed(d.growth_score)}</div>
+      <div class="dc-meta">${d.completed_28d ?? 0} completions · ${d.tasks ?? 0} tasks</div>
+    </div>`;
+  }).join('');
+
+  body.className = 'panel-body';
+  body.innerHTML = `<div class="domain-cards">${cards}</div>`;
+}
+
+/* ── PANEL: Gyani Lessons ────────────────────────────────────── */
+function renderLessons(data) {
+  const body = document.getElementById('lessons-body');
+  const count = document.getElementById('lessons-count');
+  if (!data || data._error || data.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'lessons unavailable';
+    return;
+  }
+  const lessons = (data.lessons || []).slice(0, 8);
+  if (!lessons.length) {
+    body.className = 'panel-body empty';
+    body.textContent = 'no lessons designed yet';
+    count.textContent = '';
+    return;
+  }
+  count.textContent = (data.lessons || []).length + ' total';
+
+  const items = lessons.map(l => {
+    const icon = DOMAIN_ICONS[l.domain] || '📝';
+    return `<div class="lesson-item">
+      <div class="lesson-icon ${esc(l.domain)}">${icon}</div>
+      <div class="lesson-info">
+        <div class="lesson-title">${esc(l.title)}</div>
+        <div class="lesson-meta">${esc(l.domain)} · ${relDate(l.date)} · ${l.size_kb ?? 0} KB</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  body.className = 'panel-body';
+  body.innerHTML = items;
+}
+
+/* ── PANEL: Verification Queue ───────────────────────────────── */
+function renderVerifications(data) {
+  const body = document.getElementById('verif-body');
+  const count = document.getElementById('verif-count');
+  if (!data || data._error || data.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'verification data unavailable';
+    return;
+  }
+  const pending = data.pending || [];
+  const verified = data.verified || [];
+  count.textContent = pending.length + ' ready · ' + verified.length + ' done';
+
+  if (!pending.length && !verified.length) {
+    body.className = 'panel-body empty';
+    body.textContent = 'no verifications yet';
+    return;
+  }
+
+  let html = '';
+  if (pending.length) {
+    html += '<div class="section-label">ready for verification</div>';
+    pending.slice(0, 5).forEach(p => {
+      html += `<div class="verif-item">
+        <span class="badge ready">ready</span>
+        <span class="verif-title">${esc(p.title)}</span>
+        <span class="verif-meta">pri ${p.priority}</span>
+      </div>`;
+    });
+  }
+  if (verified.length) {
+    html += '<div class="section-label" style="margin-top:10px">recently verified</div>';
+    verified.slice(0, 5).forEach(v => {
+      html += `<div class="verif-item">
+        <span class="badge done">done</span>
+        <span class="verif-title">${esc(v.title)}</span>
+        <span class="verif-meta">${relDate(v.completed_at)}</span>
+      </div>`;
+    });
+  }
+
+  body.className = 'panel-body';
+  body.innerHTML = html;
+}
+
+/* ── PANEL: Habit Grid ───────────────────────────────────────── */
+function renderHabits(data) {
+  const body = document.getElementById('habits-body');
+  const count = document.getElementById('habits-count');
+  if (!data || data._error || data.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'habit data unavailable';
+    return;
+  }
+  const habits = data.habits || {};
+  const LABELS = {
+    workout: 'workout', roaming: 'roaming', reading: 'reading', shipping: 'shipping'
+  };
+  const today = new Date().toISOString().slice(0, 10);
+
+  const rows = Object.entries(LABELS).map(([key, label]) => {
+    const days = habits[key] || [];
+    const doneCount = days.filter(d => d.done).length;
+
+    const dots = days.map(d => {
+      const isToday = d.date === today;
+      let cls = d.done ? 'done' : 'miss';
+      if (isToday) cls += ' today';
+      const dayName = new Date(d.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+      return `<span class="habit-dot ${cls}" title="${dayName} · ${d.date}${d.done ? ' ✓' : ' ✗'}"></span>`;
+    }).join('');
+
+    return `<div class="habit-row">
+      <span class="habit-label">${label}</span>
+      <span class="habit-dots">${dots}</span>
+      <span class="habit-count">${doneCount}/7</span>
+    </div>`;
+  }).join('');
+
+  // Day-of-week labels
+  const dayLabels = daysFromHabits(habits).map(d => {
+    const day = new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+    return '<span class="habit-dl">' + day.charAt(0) + '</span>';
+  }).join('');
+
+  const totalDone = Object.values(habits).flat().filter(d => d.done).length;
+  count.textContent = totalDone + '/28 done';
+
+  body.className = 'panel-body';
+  body.innerHTML = rows + '<div class="habit-day-labels">' + dayLabels + '</div>';
+}
+
+function daysFromHabits(habits) {
+  // Extract ordered unique dates from any habit array
+  const seen = new Set();
+  const dates = [];
+  for (const arr of Object.values(habits)) {
+    for (const d of arr) {
+      if (!seen.has(d.date)) {
+        seen.add(d.date);
+        dates.push(d.date);
+      }
+    }
+  }
+  return dates.sort();
+}
+
+/* ── PANEL: Alignment ────────────────────────────────────────── */
+function renderAlignment(data) {
+  const body = document.getElementById('alignment-body');
+  const dateEl = document.getElementById('alignment-date');
+  if (!data || data._error || data.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'alignment data unavailable';
+    return;
+  }
+  const reports = data.reports || [];
+  if (!reports.length) {
+    body.className = 'panel-body empty';
+    body.textContent = 'no alignment reports yet';
+    return;
+  }
+  const r = reports[0];
+  dateEl.textContent = r.date ? r.date.slice(0, 10) : '';
+
+  body.className = 'panel-body';
+  body.innerHTML =
+    '<div class="report-preview">' + esc(r.preview || '—') + '</div>' +
+    '<a class="report-link" href="obsidian://open?path=' +
+    encodeURIComponent(r.path || '') + '">open in obsidian ↗</a>' +
+    '<div class="report-date">' + fmtDate(r.date) + '</div>';
+}
+
+/* ── footer ──────────────────────────────────────────────────── */
+function renderFooter() {
+  document.getElementById('foot').textContent =
+    'atma.omnisatya.cc · refresh ' + new Date().toLocaleTimeString();
+}
+
+/* ── main load + render ──────────────────────────────────────── */
+async function load() {
+  const [growth, lessons, verif, habits, alignment] = await Promise.all([
+    jget('/api/growth'),
+    jget('/api/gyani/lessons'),
+    jget('/api/gyani/verifications'),
+    jget('/api/gyani/habits'),
+    jget('/api/gyani/alignment'),
+  ]);
+
+  renderHeader(growth);
+  renderGrowth(growth);
+  renderLessons(lessons);
+  renderVerifications(verif);
+  renderHabits(habits);
+  renderAlignment(alignment);
+  renderFooter();
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

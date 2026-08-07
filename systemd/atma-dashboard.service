@@ -1,0 +1,23 @@
+[Unit]
+Description=Atma Dashboard — atma.omnisatya.cc (Mindmap + Gyani)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/home/satyamini/miniconda3/bin/uvicorn server:app --host 127.0.0.1 --port 8601
+WorkingDirectory=/home/satyamini/atma-app
+Environment="PATH=/home/satyamini/miniconda3/bin:/home/satyamini/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+RestartPreventExitStatus=78
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

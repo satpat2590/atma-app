@@ -1,0 +1,5 @@
+# Atma Dashboard — add to ~/.cloudflared/config.yml
+# Add this to the ingress section, before the catch-all:
+
+  - hostname: atma.omnisatya.cc
+    service: http://localhost:8601
