@@ -55,6 +55,21 @@ def _supabase_url():
     return None
 
 
+def _parse_lesson_title(md_path: Path) -> str:
+    """Extract human-readable title from markdown H1, falling back to filename."""
+    try:
+        first_line = md_path.read_text().split("\n", 1)[0].strip()
+        if first_line.startswith("# "):
+            title = first_line[2:].strip()
+            # Strip date suffix like " — 2026-08-07"
+            if " — " in title:
+                title = title.rsplit(" — ", 1)[0]
+            return title
+    except Exception:
+        pass
+    return md_path.stem.replace("-", " ").title()
+
+
 def _score_color(score: float) -> str:
     if score >= 1.0:
         return "green"
@@ -147,7 +162,7 @@ def gyani_lessons():
                 stat = md_file.stat()
                 lessons.append({
                     "domain": domain_dir.name,
-                    "title": md_file.stem,
+                    "title": _parse_lesson_title(md_file),
                     "path": str(md_file.relative_to(Path.home())),
                     "date": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                     "size_kb": round(stat.st_size / 1024, 1),
@@ -165,32 +180,61 @@ def gyani_verifications():
         import psycopg2
         con = psycopg2.connect(url, connect_timeout=8)
         cur = con.cursor()
-        # Active skill tasks with lesson links (verification pending)
+        # Active skill tasks — all of them, cross-referenced with Obsidian lessons
         cur.execute(
-            """SELECT id, title, category, priority, description, created_at
-               FROM tasks WHERE assigned_to = 1 AND is_active
+            """SELECT id, title, category, priority, created_at
+               FROM tasks WHERE (assigned_to = 1 OR assigned_to IS NULL)
+               AND is_active
                AND category IN ('mental','financial')
-               AND priority >= 3 AND description LIKE '%/Curriculum/%'
+               AND priority >= 3
                ORDER BY created_at DESC"""
         )
-        pending = [
-            {
+        # Build lesson index from Obsidian for matching
+        lesson_index = {}  # task title words → lesson path
+        if OBSIDIAN_CURRICULUM.exists():
+            for domain_dir in OBSIDIAN_CURRICULUM.iterdir():
+                if not domain_dir.is_dir():
+                    continue
+                for md_file in domain_dir.glob("*.md"):
+                    if md_file.name.startswith("gyani-"):
+                        continue
+                    lesson_index[_parse_lesson_title(md_file).lower()] = str(
+                        md_file.relative_to(Path.home()))
+
+        pending = []
+        for r in cur.fetchall():
+            task_title = r[1] or ""
+            task_lower = task_title.lower()
+            matched_lesson = None
+            # 1) Exact match first
+            for lesson_title, lesson_path in lesson_index.items():
+                if task_lower == lesson_title:
+                    matched_lesson = lesson_path
+                    break
+            # 2) Fuzzy fallback: >=3 significant word overlap
+            if not matched_lesson:
+                task_words = set(w for w in task_lower.split() if len(w) > 1)
+                for lesson_title, lesson_path in lesson_index.items():
+                    lesson_words = set(w for w in lesson_title.split() if len(w) > 1)
+                    overlap = task_words & lesson_words
+                    if len(overlap) >= 2:
+                        matched_lesson = lesson_path
+                        break
+            pending.append({
                 "task_id": r[0],
                 "title": r[1],
                 "category": r[2],
                 "priority": r[3],
-                "description": r[4],
-                "created_at": r[5].isoformat() if r[5] else None,
-            }
-            for r in cur.fetchall()
-        ]
-        # Recently verified (completed skill tasks)
+                "created_at": r[4].isoformat() if r[4] else None,
+                "lesson_path": matched_lesson,
+            })
+        # Recently verified — deduped by task (latest completion only)
         cur.execute(
-            """SELECT t.id, t.title, t.category, tc.completed_at, tc.completion_quality
+            """SELECT DISTINCT ON (t.id) t.id, t.title, t.category, tc.completed_at, tc.completion_quality
                FROM tasks t JOIN task_completions tc ON tc.task_id = t.id
                WHERE t.assigned_to = 1 AND t.category IN ('mental','financial')
                AND tc.completed_at >= NOW() - INTERVAL '30 days'
-               ORDER BY tc.completed_at DESC"""
+               ORDER BY t.id, tc.completed_at DESC"""
         )
         verified = [
             {
@@ -242,18 +286,21 @@ def gyani_habits():
         d = (today - timedelta(days=i)).isoformat()
         habits["roaming"].append({"date": d, "done": d in roaming_days})
 
-    # Reading — today's daily note has Reading/Research section
-    daily_note = OBSIDIAN_DAILY / f"{today.isoformat()}.md"
-    reading_done = False
-    if daily_note.exists():
-        text = daily_note.read_text()
-        reading_done = bool(re.search(r"#+\s*(Reading|Research)", text, re.IGNORECASE))
+    # Reading — check all daily notes in the 7-day window
+    reading_days = set()
+    for i in range(7):
+        d = today - timedelta(days=i)
+        daily_note = OBSIDIAN_DAILY / f"{d.isoformat()}.md"
+        if daily_note.exists():
+            try:
+                text = daily_note.read_text()
+                if re.search(r"#+\s*(Reading|Research)", text, re.IGNORECASE):
+                    reading_days.add(d.isoformat())
+            except Exception:
+                pass
     for i in range(6, -1, -1):
         d = (today - timedelta(days=i)).isoformat()
-        if i == 0:
-            habits["reading"].append({"date": d, "done": reading_done})
-        else:
-            habits["reading"].append({"date": d, "done": False})
+        habits["reading"].append({"date": d, "done": d in reading_days})
 
     # Shipping — git commits in edoras/
     ship_days = set()

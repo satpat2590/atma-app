@@ -235,9 +235,10 @@ function renderVerifications(data) {
   let html = '';
   if (pending.length) {
     html += '<div class="section-label">ready for verification</div>';
-    pending.slice(0, 5).forEach(p => {
+    pending.slice(0, 8).forEach(p => {
+      const badge = p.lesson_path ? 'ready' : 'pending';
       html += `<div class="verif-item">
-        <span class="badge ready">ready</span>
+        <span class="badge ${badge}">${p.lesson_path ? 'ready' : 'awaiting'}</span>
         <span class="verif-title">${esc(p.title)}</span>
         <span class="verif-meta">pri ${p.priority}</span>
       </div>`;
