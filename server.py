@@ -82,7 +82,8 @@ def _score_color(score: float) -> str:
 
 @app.get("/api/growth")
 def growth():
-    """Per-task growth scores from Supabase growth_scores_28d view."""
+    """Per-task growth scores from Supabase growth_scores_28d view,
+    merged with active tasks that have 0 completions (not in the view)."""
     url = _supabase_url()
     if not url:
         return JSONResponse({"error": "no supabase url"}, status_code=503)
@@ -98,7 +99,9 @@ def growth():
         rows = cur.fetchall()
         FOLD = {"edoras": "financial"}
         tasks = []
+        seen_ids = set()
         for r in rows:
+            seen_ids.add(r[0])
             domain = FOLD.get(r[2], r[2])
             tasks.append({
                 "task_id": r[0],
@@ -111,7 +114,35 @@ def growth():
                 "score_color": _score_color(float(r[5] or 0)),
                 "last_completed": r[6].isoformat() if r[6] else None,
             })
-        # Domain rollup
+
+        # Merge 0-completion active tasks not in growth_scores_28d
+        cur.execute(
+            """SELECT id, title, category
+               FROM tasks
+               WHERE (assigned_to = 1 OR assigned_to IS NULL)
+                 AND is_active
+                 AND id NOT IN (SELECT task_id FROM growth_scores_28d WHERE assigned_to = 1)
+               ORDER BY category, title"""
+        )
+        for r in cur.fetchall():
+            tid = r[0]
+            if tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            domain = FOLD.get(r[2], r[2])
+            tasks.append({
+                "task_id": tid,
+                "title": r[1],
+                "category": r[2],
+                "domain": domain,
+                "completions_28d": 0,
+                "expected_28d": 1.0,
+                "growth_score": 0.0,
+                "score_color": "red",
+                "last_completed": None,
+            })
+
+        # Domain rollup (includes 0-score tasks now)
         domains = {}
         for t in tasks:
             d = domains.setdefault(t["domain"], {"num": 0.0, "den": 0.0, "tasks": 0, "completed_28d": 0})

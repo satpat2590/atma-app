@@ -203,7 +203,7 @@ function renderLessons(data) {
     return `<div class="lesson-item">
       <div class="lesson-icon ${esc(l.domain)}">${icon}</div>
       <div class="lesson-info">
-        <div class="lesson-title">${esc(l.title)}</div>
+        <a class="lesson-title" href="obsidian://open?path=${encodeURIComponent(l.path || '')}" title="Open in Obsidian">${esc(l.title)}</a>
         <div class="lesson-meta">${esc(l.domain)} · ${relDate(l.date)} · ${l.size_kb ?? 0} KB</div>
       </div>
     </div>`;
@@ -333,7 +333,7 @@ function renderAlignment(data) {
   const reports = data.reports || [];
   if (!reports.length) {
     body.className = 'panel-body empty';
-    body.textContent = 'no alignment reports yet';
+    body.innerHTML = '<div style=\"text-align:center;padding:20px\">📋<br><span style=\"color:var(--text-dim)\">first report Sunday</span></div>';
     return;
   }
   const r = reports[0];
@@ -350,7 +350,7 @@ function renderAlignment(data) {
 /* ── footer ──────────────────────────────────────────────────── */
 function renderFooter() {
   document.getElementById('foot').textContent =
-    'atma.omnisatya.cc · refresh ' + new Date().toLocaleTimeString();
+    'atma.omnisatya.cc' + (new Date().toLocaleTimeString() ? ' · ' + new Date().toLocaleTimeString() : '');
 }
 
 /* ── main load + render ──────────────────────────────────────── */

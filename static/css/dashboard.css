@@ -233,11 +233,13 @@ body {
 .lesson-info { min-width: 0; }
 .lesson-title {
   font-weight: 500;
-  color: var(--text);
+  color: var(--cyan);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
 }
 .lesson-meta {
   font-size: 11px;
