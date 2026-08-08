@@ -223,6 +223,33 @@ def gyani_verifications():
         import psycopg2
         con = psycopg2.connect(url, connect_timeout=8)
         cur = con.cursor()
+        # Ledger-backed exam history (authoritative when present)
+        cur.execute(
+            """SELECT v.id, v.task_id, t.title, v.state, v.quality,
+                      v.max_level_reached, v.proficiency_notes,
+                      v.started_at, v.completed_at
+               FROM verifications v LEFT JOIN tasks t ON t.id = v.task_id
+               ORDER BY v.started_at DESC LIMIT 20"""
+        )
+        exams = [
+            {
+                "verification_id": r[0],
+                "task_id": r[1],
+                "title": r[2],
+                "state": r[3],
+                "quality": r[4],
+                "max_level": r[5],
+                "notes": r[6],
+                "started_at": r[7].isoformat() if r[7] else None,
+                "completed_at": r[8].isoformat() if r[8] else None,
+            }
+            for r in cur.fetchall()
+        ]
+        # Index latest exam per task (rows already DESC by started_at)
+        exam_by_task = {}
+        for e in exams:
+            if e["task_id"] is not None and e["task_id"] not in exam_by_task:
+                exam_by_task[e["task_id"]] = e
         # Active skill tasks — all of them, cross-referenced with Obsidian lessons
         cur.execute(
             """SELECT id, title, category, priority, created_at
@@ -263,6 +290,17 @@ def gyani_verifications():
                     if len(overlap) >= 2:
                         matched_lesson = lesson_path
                         break
+            # Ledger is authoritative for exam state when a row exists
+            exam = exam_by_task.get(r[0])
+            if exam:
+                stage = {
+                    "in_progress": "examining",
+                    "passed": "passed",
+                    "failed": "failed",
+                    "abandoned": "abandoned",
+                }.get(exam["state"], "designed")
+            else:
+                stage = "ready" if matched_lesson else "designing"
             pending.append({
                 "task_id": r[0],
                 "title": r[1],
@@ -270,6 +308,10 @@ def gyani_verifications():
                 "priority": r[3],
                 "created_at": r[4].isoformat() if r[4] else None,
                 "lesson_path": matched_lesson,
+                "stage": stage,
+                "quality": exam["quality"] if exam else None,
+                "max_level": exam["max_level"] if exam else None,
+                "notes": exam["notes"] if exam else None,
             })
         # Recently verified — deduped by task (latest completion only)
         cur.execute(
@@ -290,7 +332,7 @@ def gyani_verifications():
             for r in cur.fetchall()
         ]
         con.close()
-        return {"pending": pending, "verified": verified}
+        return {"pending": pending, "verified": verified, "exams": exams}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 

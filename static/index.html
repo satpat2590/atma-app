@@ -235,7 +235,19 @@ function renderVerifications(data) {
   }
   const pending = data.pending || [];
   const verified = data.verified || [];
-  count.textContent = pending.length + ' ready · ' + verified.length + ' done';
+  const STAGE = {
+    designing: ['designing', 'pending'],
+    ready:     ['ready',     'ready'],
+    examining: ['examining', 'examining'],
+    passed:    ['passed',    'done'],
+    failed:    ['failed',    'failed'],
+    abandoned: ['abandoned', 'pending'],
+  };
+  const readyCount = pending.filter(p => p.stage === 'ready').length;
+  const examining = pending.filter(p => p.stage === 'examining').length;
+  count.textContent = readyCount + ' ready' +
+    (examining ? ' · ' + examining + ' examining' : '') +
+    ' · ' + verified.length + ' done';
 
   if (!pending.length && !verified.length) {
     body.className = 'panel-body empty';
@@ -245,13 +257,18 @@ function renderVerifications(data) {
 
   let html = '';
   if (pending.length) {
-    html += '<div class="section-label">ready for verification</div>';
+    html += '<div class="section-label">curriculum</div>';
     pending.slice(0, 8).forEach(p => {
-      const badge = p.lesson_path ? 'ready' : 'pending';
-      html += `<div class="verif-item">
-        <span class="badge ${badge}">${p.lesson_path ? 'ready' : 'awaiting'}</span>
-        <span class="verif-title">${esc(p.title)}</span>
-        <span class="verif-meta">pri ${p.priority}</span>
+      const [label, cls] = STAGE[p.stage] || STAGE.designing;
+      const meta = p.quality ? 'q' + p.quality + (p.max_level ? ' · L' + p.max_level : '')
+                             : 'pri ' + p.priority;
+      const title = p.lesson_path
+        ? `<a class="verif-title" href="#" onclick="viewLesson('${esc(p.lesson_path)}');return false">${esc(p.title)}</a>`
+        : `<span class="verif-title">${esc(p.title)}</span>`;
+      html += `<div class="verif-item"${p.notes ? ` title="${esc(p.notes)}"` : ''}>
+        <span class="badge ${cls}">${label}</span>
+        ${title}
+        <span class="verif-meta">${meta}</span>
       </div>`;
     });
   }

@@ -268,6 +268,10 @@ body {
 .badge.ready   { background: var(--green-faint);  color: var(--green-dim);  }
 .badge.pending { background: var(--amber-faint); color: var(--amber); }
 .badge.done    { background: var(--cyan-faint);   color: var(--cyan-dim);   }
+.badge.examining { background: var(--amber-faint); color: var(--amber); }
+.badge.failed  { background: var(--red-faint);    color: var(--red);    }
+a.verif-title { color: var(--text); text-decoration: none; }
+a.verif-title:hover { color: var(--cyan); text-decoration: underline; }
 .verif-title {
   flex: 1;
   white-space: nowrap;
