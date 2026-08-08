@@ -92,6 +92,15 @@
 
   </div>
 
+  <!-- ─── ROW 3: SUBMISSIONS ──────────────────────── -->
+  <div class="panel" id="submissions-panel">
+    <div class="panel-header">
+      submissions · drive
+      <span class="ph-count" id="submissions-count"></span>
+    </div>
+    <div class="panel-body loading" id="submissions-body">loading…</div>
+  </div>
+
   <footer id="foot"></footer>
 </div>
 
@@ -406,14 +415,59 @@ function closeLesson() {
   document.getElementById('lesson-modal').style.display = 'none';
 }
 
+/* ── PANEL: Submissions ──────────────────────────────────────── */
+const SUB_ICONS = { image: '🖼️', doc: '📄', pdf: '📕', sheet: '📊', file: '📎' };
+
+function renderSubmissions(data) {
+  const body = document.getElementById('submissions-body');
+  const count = document.getElementById('submissions-count');
+  if (!data || data._error || data.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'drive unavailable';
+    return;
+  }
+  const subs = data.submissions || [];
+  const link = data.folder_link;
+  count.innerHTML = (subs.length
+      ? data.unreviewed + ' awaiting review · ' + subs.length + ' total'
+      : 'empty') +
+    (link ? ` · <a href="${link}" target="_blank">open drive ↪</a>` : '');
+
+  if (!subs.length) {
+    body.className = 'panel-body empty';
+    body.innerHTML = '<div style="text-align:center;padding:16px">📤<br>' +
+      '<span style="color:var(--text-dim)">drop work in <strong>Gyani-Submissions</strong> ' +
+      'on Drive — handwritten derivations, essays, compositions</span></div>';
+    return;
+  }
+
+  body.className = 'panel-body';
+  body.innerHTML = subs.slice(0, 10).map(s => {
+    const icon = SUB_ICONS[s.kind] || SUB_ICONS.file;
+    const badge = s.reviewed
+      ? '<span class="badge done">graded</span>'
+      : '<span class="badge ready">awaiting</span>';
+    const name = s.web_link
+      ? `<a class="verif-title" href="${s.web_link}" target="_blank">${esc(s.name)}</a>`
+      : `<span class="verif-title">${esc(s.name)}</span>`;
+    return `<div class="verif-item"${s.assessment ? ` title="${esc(s.assessment)}"` : ''}>
+      <span class="lesson-icon">${icon}</span>
+      ${badge}
+      ${name}
+      <span class="verif-meta">${relDate(s.modified)}</span>
+    </div>`;
+  }).join('');
+}
+
 /* ── main load + render ──────────────────────────────────────── */
 async function load() {
-  const [growth, lessons, verif, habits, alignment] = await Promise.all([
+  const [growth, lessons, verif, habits, alignment, submissions] = await Promise.all([
     jget('/api/growth'),
     jget('/api/gyani/lessons'),
     jget('/api/gyani/verifications'),
     jget('/api/gyani/habits'),
     jget('/api/gyani/alignment'),
+    jget('/api/gyani/submissions'),
   ]);
 
   renderHeader(growth);
@@ -422,6 +476,7 @@ async function load() {
   renderVerifications(verif);
   renderHabits(habits);
   renderAlignment(alignment);
+  renderSubmissions(submissions);
   renderFooter();
 }
 
