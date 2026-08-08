@@ -6,6 +6,8 @@
 <title>Atma — dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%2358a6ff'/></svg>">
 <link rel="stylesheet" href="/static/css/dashboard.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 </head>
 <body>
 <div id="app">
@@ -364,118 +366,9 @@ function renderFooter() {
 
 /* ── lesson viewer ────────────────────────────────────────────── */
 function renderMarkdown(md) {
-  // Split into lines for line-by-line processing
-  const lines = md.split('\n');
-  let html = '';
-  let inList = false;
-  let inParagraph = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    // Headers
-    if (trimmed.startsWith('### ')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      html += '<h3>' + esc(trimmed.slice(4)) + '</h3>';
-      continue;
-    }
-    if (trimmed.startsWith('## ')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      html += '<h2>' + esc(trimmed.slice(3)) + '</h2>';
-      continue;
-    }
-    if (trimmed.startsWith('# ')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      html += '<h1>' + esc(trimmed.slice(2)) + '</h1>';
-      continue;
-    }
-
-    // List items — bullet or numbered
-    const bulletMatch = trimmed.match(/^[-*]\s+(.+)/);
-    const numMatch = trimmed.match(/^\d+[.)]\s+(.+)/);
-    if (bulletMatch || numMatch) {
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      if (!inList) { html += '<ul>'; inList = true; }
-      html += '<li>' + esc(bulletMatch ? bulletMatch[1] : numMatch[1]) + '</li>';
-      continue;
-    }
-
-    // Horizontal rule or table separator
-    if (trimmed.match(/^[-|=]{3,}$/)) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      html += '<hr>';
-      continue;
-    }
-
-    // Table rows (pipe-separated)
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      const cells = trimmed.slice(1, -1).split('|').map(c => c.trim());
-      const isHeader = lines[i+1] && lines[i+1].trim().match(/^\|[-:| ]+\|$/);
-      const tag = isHeader ? 'th' : 'td';
-      if (!html.endsWith('</table>') && (i === 0 || !lines[i-1].trim().startsWith('|'))) {
-        html += '<table>';
-      }
-      html += '<tr>' + cells.map(c => '<' + tag + '>' + esc(c) + '</' + tag + '>').join('') + '</tr>';
-      if (i+1 >= lines.length || !lines[i+1].trim().startsWith('|')) {
-        html += '</table>';
-      }
-      continue;
-    }
-
-    // Blockquotes
-    if (trimmed.startsWith('> ')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      html += '<blockquote>' + esc(trimmed.slice(2)) + '</blockquote>';
-      continue;
-    }
-
-    // Code blocks
-    if (trimmed.startsWith('```')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      html += '<pre><code>';
-      i++;
-      while (i < lines.length && !lines[i].trim().startsWith('```')) {
-        html += esc(lines[i]) + '\n';
-        i++;
-      }
-      html += '</code></pre>';
-      continue;
-    }
-
-    // Inline code
-    let processed = trimmed.replace(/`([^`]+)`/g, '<code>$1</code>');
-    // Bold
-    processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // Italic
-    processed = processed.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Links
-    processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-
-    // Empty line: close paragraph or list
-    if (trimmed === '') {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inParagraph) { html += '</p>'; inParagraph = false; }
-      continue;
-    }
-
-    // Regular paragraph text
-    if (!inParagraph) { html += '<p>'; inParagraph = true; }
-    else { html += ' '; }
-    html += processed;
-  }
-
-  if (inList) html += '</ul>';
-  if (inParagraph) html += '</p>';
-  return html;
+  // marked (GFM tables, lists, code) + DOMPurify (XSS-safe)
+  const raw = marked.parse(md, { gfm: true, breaks: false });
+  return DOMPurify.sanitize(raw);
 }
 
 async function viewLesson(path) {
