@@ -251,10 +251,13 @@ function renderVerifications(data) {
     passed:    ['passed',    'done'],
     failed:    ['failed',    'failed'],
     abandoned: ['abandoned', 'pending'],
+    locked:    ['locked',    'pending'],
   };
-  const readyCount = pending.filter(p => p.stage === 'ready').length;
+  const readyCount = pending.filter(p => p.stage === 'ready' && !p.locked).length;
+  const lockedCount = pending.filter(p => p.locked).length;
   const examining = pending.filter(p => p.stage === 'examining').length;
   count.textContent = readyCount + ' ready' +
+    (lockedCount ? ' · ' + lockedCount + ' locked' : '') +
     (examining ? ' · ' + examining + ' examining' : '') +
     ' · ' + verified.length + ' done';
 
@@ -271,13 +274,13 @@ function renderVerifications(data) {
       const [label, cls] = STAGE[p.stage] || STAGE.designing;
       const meta = p.quality ? 'q' + p.quality + (p.max_level ? ' · L' + p.max_level : '')
                              : 'pri ' + p.priority;
-      const title = p.lesson_path
+      const title = (p.lesson_path && !p.locked)
         ? `<a class="verif-title" href="#" onclick="viewLesson('${esc(p.lesson_path)}');return false">${esc(p.title)}</a>`
         : `<span class="verif-title">${esc(p.title)}</span>`;
-      html += `<div class="verif-item"${p.notes ? ` title="${esc(p.notes)}"` : ''}>
+      html += `<div class="verif-item${p.locked ? ' locked' : ''}"${p.notes ? ` title="${esc(p.notes)}"` : ''}>
         <span class="badge ${cls}">${label}</span>
         ${title}
-        <span class="verif-meta">${meta}</span>
+        <span class="verif-meta">${meta}${p.prerequisite_title ? ' · 🔒 ' + esc(p.prerequisite_title.substring(0,25)) + '…' : ''}</span>
       </div>`;
     });
   }

@@ -220,7 +220,7 @@ def gyani_lesson_content(path: str = Query(..., description="Relative path from 
 
 @app.get("/api/gyani/verifications")
 def gyani_verifications():
-    """Pending + verified lessons from Atma tasks with lesson links."""
+    """Pending + verified tasks with prerequisite locking and ledger-backed stages."""
     url = _supabase_url()
     if not url:
         return JSONResponse({"error": "no supabase"}, status_code=503)
@@ -228,44 +228,37 @@ def gyani_verifications():
         import psycopg2
         con = psycopg2.connect(url, connect_timeout=8)
         cur = con.cursor()
-        # Ledger-backed exam history (authoritative when present)
+
+        # Ledger exam history
         cur.execute(
-            """SELECT v.id, v.task_id, t.title, v.state, v.quality,
-                      v.max_level_reached, v.proficiency_notes,
-                      v.started_at, v.completed_at
-               FROM verifications v LEFT JOIN tasks t ON t.id = v.task_id
-               ORDER BY v.started_at DESC LIMIT 20"""
+            "SELECT v.id, v.task_id, t.title, v.state, v.quality, "
+            "v.max_level_reached, v.proficiency_notes, v.started_at, v.completed_at "
+            "FROM verifications v LEFT JOIN tasks t ON t.id = v.task_id "
+            "ORDER BY v.started_at DESC LIMIT 20"
         )
         exams = [
-            {
-                "verification_id": r[0],
-                "task_id": r[1],
-                "title": r[2],
-                "state": r[3],
-                "quality": r[4],
-                "max_level": r[5],
-                "notes": r[6],
-                "started_at": r[7].isoformat() if r[7] else None,
-                "completed_at": r[8].isoformat() if r[8] else None,
-            }
+            {"verification_id": r[0], "task_id": r[1], "title": r[2],
+             "state": r[3], "quality": r[4], "max_level": r[5],
+             "notes": r[6], "started_at": r[7].isoformat() if r[7] else None,
+             "completed_at": r[8].isoformat() if r[8] else None}
             for r in cur.fetchall()
         ]
-        # Index latest exam per task (rows already DESC by started_at)
         exam_by_task = {}
         for e in exams:
             if e["task_id"] is not None and e["task_id"] not in exam_by_task:
                 exam_by_task[e["task_id"]] = e
-        # Active skill tasks — all of them, cross-referenced with Obsidian lessons
+
+        # All active skill tasks with prerequisites
         cur.execute(
-            """SELECT id, title, category, priority, created_at
-               FROM tasks WHERE (assigned_to = 1 OR assigned_to IS NULL)
-               AND is_active
-               AND category IN ('mental','financial')
-               AND priority >= 3
-               ORDER BY created_at DESC"""
+            "SELECT id, title, category, priority, prerequisite_task_id, created_at "
+            "FROM tasks WHERE (assigned_to = 1 OR assigned_to IS NULL) "
+            "AND is_active AND category IN ('mental','financial') "
+            "AND priority >= 3 ORDER BY created_at DESC"
         )
-        # Build lesson index from Obsidian for matching
-        lesson_index = {}  # task title words → lesson path
+        rows = cur.fetchall()
+
+        # Lesson index from Obsidian
+        lesson_index = {}
         if OBSIDIAN_CURRICULUM.exists():
             for domain_dir in OBSIDIAN_CURRICULUM.iterdir():
                 if not domain_dir.is_dir():
@@ -276,72 +269,89 @@ def gyani_verifications():
                     lesson_index[_parse_lesson_title(md_file).lower()] = str(
                         md_file.relative_to(Path.home()))
 
+        # Completed = passed exams (q>=3) + any task_completions
+        completed_ids = set()
+        for e in exams:
+            if e["task_id"] and e["state"] == "passed" and (e["quality"] or 0) >= 3:
+                completed_ids.add(e["task_id"])
+        if rows:
+            cur.execute(
+                "SELECT DISTINCT task_id FROM task_completions WHERE task_id = ANY(%s)",
+                ([r[0] for r in rows],)
+            )
+            completed_ids.update(r[0] for r in cur.fetchall())
+
+        row_by_id = {r[0]: r for r in rows}
+
         pending = []
-        for r in cur.fetchall():
-            task_title = r[1] or ""
-            task_lower = task_title.lower()
+        for r in rows:
+            tid, title, cat, pri, prereq_id, created = r
+            created_iso = created.isoformat() if created else None
+
+            # Lesson matching
             matched_lesson = None
-            # 1) Exact match first
-            for lesson_title, lesson_path in lesson_index.items():
-                if task_lower == lesson_title:
-                    matched_lesson = lesson_path
+            tl = (title or "").lower()
+            for lt, lp in lesson_index.items():
+                if tl == lt:
+                    matched_lesson = lp
                     break
-            # 2) Fuzzy fallback: >=3 significant word overlap
             if not matched_lesson:
-                task_words = set(w for w in task_lower.split() if len(w) > 1)
-                for lesson_title, lesson_path in lesson_index.items():
-                    lesson_words = set(w for w in lesson_title.split() if len(w) > 1)
-                    overlap = task_words & lesson_words
-                    if len(overlap) >= 2:
-                        matched_lesson = lesson_path
+                tw = set(w for w in tl.split() if len(w) > 1)
+                for lt, lp in lesson_index.items():
+                    if len(tw & set(w for w in lt.split() if len(w) > 1)) >= 2:
+                        matched_lesson = lp
                         break
-            # Ledger is authoritative for exam state when a row exists
-            exam = exam_by_task.get(r[0])
+
+            # Locked? Prerequisite not completed
+            locked = False
+            prereq_title = None
+            if prereq_id is not None and prereq_id not in completed_ids:
+                locked = True
+                pr = row_by_id.get(prereq_id)
+                if pr:
+                    prereq_title = pr[1]
+
+            # Stage
+            exam = exam_by_task.get(tid)
             if exam:
-                stage = {
-                    "in_progress": "examining",
-                    "passed": "passed",
-                    "failed": "failed",
-                    "abandoned": "abandoned",
-                }.get(exam["state"], "designed")
+                stage = {"in_progress": "examining", "passed": "passed",
+                         "failed": "failed", "abandoned": "abandoned"}.get(
+                             exam["state"], "designed")
+            elif locked:
+                stage = "locked"
             else:
                 stage = "ready" if matched_lesson else "designing"
+
             pending.append({
-                "task_id": r[0],
-                "title": r[1],
-                "category": r[2],
-                "priority": r[3],
-                "created_at": r[4].isoformat() if r[4] else None,
-                "lesson_path": matched_lesson,
-                "stage": stage,
+                "task_id": tid, "title": title, "category": cat,
+                "priority": pri, "created_at": created_iso,
+                "lesson_path": matched_lesson, "stage": stage,
+                "locked": locked,
+                "prerequisite_task_id": prereq_id,
+                "prerequisite_title": prereq_title,
                 "quality": exam["quality"] if exam else None,
                 "max_level": exam["max_level"] if exam else None,
                 "notes": exam["notes"] if exam else None,
             })
-        # Recently verified — deduped by task (latest completion only)
+
+        # Recently verified (old-style completions)
         cur.execute(
-            """SELECT DISTINCT ON (t.id) t.id, t.title, t.category, tc.completed_at, tc.completion_quality
-               FROM tasks t JOIN task_completions tc ON tc.task_id = t.id
-               WHERE t.assigned_to = 1 AND t.category IN ('mental','financial')
-               AND tc.completed_at >= NOW() - INTERVAL '30 days'
-               ORDER BY t.id, tc.completed_at DESC"""
+            "SELECT DISTINCT ON (t.id) t.id, t.title, t.category, "
+            "tc.completed_at, tc.completion_quality "
+            "FROM tasks t JOIN task_completions tc ON tc.task_id = t.id "
+            "WHERE t.assigned_to = 1 AND t.category IN ('mental','financial') "
+            "AND tc.completed_at >= NOW() - INTERVAL '30 days' "
+            "ORDER BY t.id, tc.completed_at DESC"
         )
         verified = [
-            {
-                "task_id": r[0],
-                "title": r[1],
-                "category": r[2],
-                "completed_at": r[3].isoformat() if r[3] else None,
-                "quality": r[4],
-            }
+            {"task_id": r[0], "title": r[1], "category": r[2],
+             "completed_at": r[3].isoformat() if r[3] else None, "quality": r[4]}
             for r in cur.fetchall()
         ]
         con.close()
         return {"pending": pending, "verified": verified, "exams": exams}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=503)
-
-
 @app.get("/api/gyani/habits")
 def gyani_habits():
     """7-day habit grid: workout, reading, shipping."""

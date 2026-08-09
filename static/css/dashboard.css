@@ -270,6 +270,8 @@ body {
 .badge.done    { background: var(--cyan-faint);   color: var(--cyan-dim);   }
 .badge.examining { background: var(--amber-faint); color: var(--amber); }
 .badge.failed  { background: var(--red-faint);    color: var(--red);    }
+.verif-item.locked { opacity: 0.5; }
+.verif-item.locked .verif-title { cursor: not-allowed; }
 a.verif-title { color: var(--text); text-decoration: none; }
 a.verif-title:hover { color: var(--cyan); text-decoration: underline; }
 .verif-title {
