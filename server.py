@@ -15,6 +15,9 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import subprocess
+
+import psycopg2
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,7 +95,6 @@ def growth():
     if not url:
         return JSONResponse({"error": "no supabase url"}, status_code=503)
     try:
-        import psycopg2
         con = psycopg2.connect(url, connect_timeout=8)
         cur = con.cursor()
         cur.execute(
@@ -225,7 +227,6 @@ def gyani_verifications():
     if not url:
         return JSONResponse({"error": "no supabase"}, status_code=503)
     try:
-        import psycopg2
         con = psycopg2.connect(url, connect_timeout=8)
         cur = con.cursor()
 
@@ -395,7 +396,6 @@ def gyani_habits():
     # Shipping — git commits in edoras/
     ship_days = set()
     if EDORAS_REPO.exists():
-        import subprocess
         try:
             result = subprocess.run(
                 ["git", "-C", str(EDORAS_REPO), "log", "--since=7 days ago", "--format=%cs", "--author=patelsatyam100@gmail.com"],
@@ -470,7 +470,6 @@ def gyani_report_card():
     url = _supabase_url()
     if url:
         try:
-            import psycopg2
             con = psycopg2.connect(url, connect_timeout=8)
             cur = con.cursor()
             cur.execute(
@@ -493,7 +492,6 @@ def gyani_report_card():
     # Lessons verified
     if url:
         try:
-            import psycopg2
             con = psycopg2.connect(url, connect_timeout=8)
             cur = con.cursor()
             cur.execute(
@@ -528,7 +526,6 @@ SUBMISSIONS_FOLDER = "Gyani-Submissions"
 
 def _gws(*args, timeout=30):
     """Run the Google Workspace CLI with Gyani's credentials."""
-    import subprocess
     if not GWS_SCRIPT.exists():
         return None
     env = dict(os.environ, HERMES_HOME=str(GYANI_HOME))
@@ -580,7 +577,6 @@ def gyani_submissions():
     url = _supabase_url()
     if url:
         try:
-            import psycopg2
             con = psycopg2.connect(url, connect_timeout=8)
             cur = con.cursor()
             cur.execute(
