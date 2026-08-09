@@ -281,6 +281,7 @@ function renderVerifications(data) {
         <span class="badge ${cls}">${label}</span>
         ${title}
         <span class="verif-meta">${meta}${p.prerequisite_title ? ' · 🔒 ' + esc(p.prerequisite_title.substring(0,25)) + '…' : ''}</span>
+        ${p.stage === 'ready' && p.lesson_path ? '<a class="exam-start" href="https://t.me/gyaniomnibot" target="_blank" title="Message Gyani to start the exam">start exam →</a>' : ''}
       </div>`;
     });
   }

@@ -272,6 +272,13 @@ body {
 .badge.failed  { background: var(--red-faint);    color: var(--red);    }
 .verif-item.locked { opacity: 0.5; }
 .verif-item.locked .verif-title { cursor: not-allowed; }
+.exam-start {
+  font-size: 11px; color: var(--green);
+  text-decoration: none; white-space: nowrap;
+  padding: 2px 8px; border: 1px solid var(--green-faint);
+  border-radius: var(--radius-sm);
+}
+.exam-start:hover { background: var(--green-faint); }
 a.verif-title { color: var(--text); text-decoration: none; }
 a.verif-title:hover { color: var(--cyan); text-decoration: underline; }
 .verif-title {
