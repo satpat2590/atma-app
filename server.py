@@ -222,7 +222,7 @@ def gyani_lesson_content(path: str = Query(..., description="Relative path from 
 
 @app.get("/api/gyani/verifications")
 def gyani_verifications():
-    """Pending + verified tasks with prerequisite locking and ledger-backed stages."""
+    """Pending + verified tasks with proficiency-gated unlocking."""
     url = _supabase_url()
     if not url:
         return JSONResponse({"error": "no supabase"}, status_code=503)
@@ -230,7 +230,16 @@ def gyani_verifications():
         con = psycopg2.connect(url, connect_timeout=8)
         cur = con.cursor()
 
-        # Ledger exam history
+        # ── compute per-tag proficiency from the ledger ──
+        cur.execute(
+            "SELECT tag_id, ROUND(AVG(quality)::numeric, 2) AS prof, "
+            "COUNT(*) AS exams, MAX(completed_at) AS last "
+            "FROM verifications WHERE state = 'passed' AND tag_id IS NOT NULL "
+            "GROUP BY tag_id"
+        )
+        tag_prof = {r[0]: {"proficiency": r[1], "exams": r[2], "last": r[3]} for r in cur.fetchall()}
+
+        # ── exam history ──
         cur.execute(
             "SELECT v.id, v.task_id, t.title, v.state, v.quality, "
             "v.max_level_reached, v.proficiency_notes, v.started_at, v.completed_at "
@@ -249,68 +258,96 @@ def gyani_verifications():
             if e["task_id"] is not None and e["task_id"] not in exam_by_task:
                 exam_by_task[e["task_id"]] = e
 
-        # All active skill tasks with prerequisites
+        # ── tag tree with proficiency + dependencies ──
+        cur.execute("SELECT id, name, parent_tag_id, required_proficiency FROM tags ORDER BY id")
+        tag_rows = cur.fetchall()
+        tag_index = {r[0]: {"name": r[1], "parent": r[2], "required": float(r[3] or 3.0)} for r in tag_rows}
+
+        # Tag dependencies
+        cur.execute("SELECT tag_id, depends_on_tag_id, required_proficiency FROM tag_dependencies")
+        deps_by_tag = {}
+        for r in cur.fetchall():
+            deps_by_tag.setdefault(r[0], []).append({"depends_on": r[1], "required": float(r[2] or 3.0)})
+
+        # Compute unlocked tags: BFS from roots — a tag is unlocked when ALL its
+        # parents AND dependency tags have proficiency >= required_proficiency
+        unlocked_tags = set()
+        # Roots: tags with no parent
+        roots = [tid for tid, t in tag_index.items() if t["parent"] is None]
+        # Also include any tag whose parent's proficiency meets threshold
+        def _unlocked(tid, visited=None):
+            if visited is None: visited = set()
+            if tid in visited: return tid in unlocked_tags
+            visited.add(tid)
+            t = tag_index[tid]
+            # Root tags are always visible
+            if t["parent"] is None:
+                unlocked_tags.add(tid)
+                return True
+            # Check parent proficiency
+            parent_id = t["parent"]
+            parent_prof = tag_prof.get(parent_id, {}).get("proficiency", 0)
+            if parent_prof >= t["required"] and _unlocked(parent_id, visited):
+                # Check cross-domain dependencies too
+                deps_ok = True
+                for dep in deps_by_tag.get(tid, []):
+                    dep_prof = tag_prof.get(dep["depends_on"], {}).get("proficiency", 0)
+                    if dep_prof < dep["required"]:
+                        deps_ok = False
+                        break
+                if deps_ok:
+                    unlocked_tags.add(tid)
+                    return True
+            return False
+
+        for tid in tag_index:
+            if tid not in unlocked_tags:
+                _unlocked(tid)
+
+        # ── active skill tasks ──
         cur.execute(
-            "SELECT id, title, category, priority, prerequisite_task_id, created_at "
+            "SELECT id, title, category, priority, created_at "
             "FROM tasks WHERE (assigned_to = 1 OR assigned_to IS NULL) "
             "AND is_active AND category IN ('mental','financial') "
             "AND priority >= 3 ORDER BY created_at DESC"
         )
         rows = cur.fetchall()
 
-        # Lesson index from Obsidian
+        # Lesson index
         lesson_index = {}
         if OBSIDIAN_CURRICULUM.exists():
             for domain_dir in OBSIDIAN_CURRICULUM.iterdir():
-                if not domain_dir.is_dir():
-                    continue
+                if not domain_dir.is_dir(): continue
                 for md_file in domain_dir.glob("*.md"):
-                    if md_file.name.startswith("gyani-"):
-                        continue
+                    if md_file.name.startswith("gyani-"): continue
                     lesson_index[_parse_lesson_title(md_file).lower()] = str(
                         md_file.relative_to(Path.home()))
 
-        # Completed = passed exams (q>=3) + any task_completions
-        completed_ids = set()
-        for e in exams:
-            if e["task_id"] and e["state"] == "passed" and (e["quality"] or 0) >= 3:
-                completed_ids.add(e["task_id"])
-        if rows:
-            cur.execute(
-                "SELECT DISTINCT task_id FROM task_completions WHERE task_id = ANY(%s)",
-                ([r[0] for r in rows],)
-            )
-            completed_ids.update(r[0] for r in cur.fetchall())
-
-        row_by_id = {r[0]: r for r in rows}
+        # Resolve tag for each task
+        cur.execute("SELECT task_id, tag_id FROM task_tags")
+        task_tag = {r[0]: r[1] for r in cur.fetchall()}
 
         pending = []
         for r in rows:
-            tid, title, cat, pri, prereq_id, created = r
+            tid, title, cat, pri, created = r
             created_iso = created.isoformat() if created else None
+            task_tag_id = task_tag.get(tid)
 
             # Lesson matching
             matched_lesson = None
             tl = (title or "").lower()
             for lt, lp in lesson_index.items():
-                if tl == lt:
-                    matched_lesson = lp
-                    break
+                if tl == lt: matched_lesson = lp; break
             if not matched_lesson:
                 tw = set(w for w in tl.split() if len(w) > 1)
                 for lt, lp in lesson_index.items():
                     if len(tw & set(w for w in lt.split() if len(w) > 1)) >= 2:
-                        matched_lesson = lp
-                        break
+                        matched_lesson = lp; break
 
-            # Locked? Prerequisite not completed
+            # Locked? Tag must be in unlocked_tags (proficiency gate passed)
             locked = False
-            prereq_title = None
-            if prereq_id is not None and prereq_id not in completed_ids:
+            if task_tag_id is not None and task_tag_id not in unlocked_tags:
                 locked = True
-                pr = row_by_id.get(prereq_id)
-                if pr:
-                    prereq_title = pr[1]
 
             # Stage
             exam = exam_by_task.get(tid)
@@ -323,19 +360,33 @@ def gyani_verifications():
             else:
                 stage = "ready" if matched_lesson else "designing"
 
+            # What's locking it? Show the first unmet gate
+            lock_reason = None
+            if locked and task_tag_id is not None:
+                t = tag_index.get(task_tag_id, {})
+                parent_id = t.get("parent")
+                if parent_id:
+                    parent_prof = tag_prof.get(parent_id, {}).get("proficiency", 0)
+                    parent_req = t.get("required", 3.0)
+                    if parent_prof < parent_req:
+                        lock_reason = (tag_index[parent_id]["name"]
+                                       if parent_id in tag_index else f"tag#{parent_id}")
+
             pending.append({
                 "task_id": tid, "title": title, "category": cat,
                 "priority": pri, "created_at": created_iso,
                 "lesson_path": matched_lesson, "stage": stage,
                 "locked": locked,
-                "prerequisite_task_id": prereq_id,
-                "prerequisite_title": prereq_title,
+                "tag_id": task_tag_id,
+                "tag_name": tag_index[task_tag_id]["name"] if task_tag_id in tag_index else None,
+                "lock_reason": lock_reason,
+                "tag_proficiency": tag_prof.get(task_tag_id, {}).get("proficiency", 0) if task_tag_id else None,
                 "quality": exam["quality"] if exam else None,
                 "max_level": exam["max_level"] if exam else None,
                 "notes": exam["notes"] if exam else None,
             })
 
-        # Recently verified (old-style completions)
+        # Recently verified
         cur.execute(
             "SELECT DISTINCT ON (t.id) t.id, t.title, t.category, "
             "tc.completed_at, tc.completion_quality "
@@ -350,7 +401,13 @@ def gyani_verifications():
             for r in cur.fetchall()
         ]
         con.close()
-        return {"pending": pending, "verified": verified, "exams": exams}
+        return {
+            "pending": pending,
+            "verified": verified,
+            "exams": exams,
+            "tag_proficiency": {str(k): v for k, v in tag_prof.items()},
+            "unlocked_tags": sorted(list(unlocked_tags)),
+        }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 @app.get("/api/gyani/habits")
