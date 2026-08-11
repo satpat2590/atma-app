@@ -19,7 +19,9 @@ import subprocess
 
 import psycopg2
 
-from fastapi import FastAPI, Query
+import aiohttp
+
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -566,6 +568,171 @@ def gyani_report_card():
 # ── Mindmap ──────────────────────────────────────────────────
 
 @app.get("/api/mindmap")
+def mindmap_data():
+    """Serve pre-generated graph.json."""
+    if GRAPH_JSON.exists():
+        return FileResponse(GRAPH_JSON)
+    return JSONResponse({"error": "graph not generated"}, status_code=503)
+
+
+# ── Tutor Chat ──────────────────────────────────────────────
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+GYANI_MODEL = "deepseek/deepseek-v4-pro"
+
+
+def _openrouter_key():
+    """Read OpenRouter key from Gyani's profile .env (same one Gyani uses)."""
+    env_path = Path.home() / ".hermes" / "profiles" / "gyani" / ".env"
+    if not env_path.exists():
+        return os.environ.get("OPENROUTER_API_KEY")
+    for line in env_path.read_text().splitlines():
+        if line.startswith("OPENROUTER_API_KEY="):
+            return line.split("=", 1)[1].strip()
+    return os.environ.get("OPENROUTER_API_KEY")
+
+
+def _build_tutor_context() -> str:
+    """Build Gyani's tutoring context: proficiency, active lessons, recent exams."""
+    url = _supabase_url()
+    if not url:
+        return "No Atma data available."
+
+    parts = []
+    con = psycopg2.connect(url, connect_timeout=8)
+    cur = con.cursor()
+
+    # Proficiency per tag
+    cur.execute(
+        "SELECT tag_id, ROUND(AVG(quality)::numeric,2), COUNT(*), MAX(completed_at) "
+        "FROM verifications WHERE state='passed' AND tag_id IS NOT NULL "
+        "GROUP BY tag_id ORDER BY AVG(quality) DESC"
+    )
+    prof_rows = cur.fetchall()
+    if prof_rows:
+        cur.execute("SELECT id, name FROM tags WHERE id = ANY(%s)", ([r[0] for r in prof_rows],))
+        tag_names = {r[0]: r[1] for r in cur.fetchall()}
+        parts.append("=== SATYAM'S PROFICIENCY ===")
+        for r in prof_rows:
+            name = tag_names.get(r[0], f"tag#{r[0]}")
+            parts.append(f"  {name}: q={r[1]} ({r[2]} exams, last={r[3].isoformat()[:10] if r[3] else '?'})")
+    else:
+        parts.append("=== SATYAM'S PROFICIENCY ===\n  (no exams passed yet)")
+
+    # Active lessons
+    parts.append("\n=== ACTIVE LESSONS ===")
+    if OBSIDIAN_CURRICULUM.exists():
+        lessons = []
+        for domain_dir in OBSIDIAN_CURRICULUM.iterdir():
+            if not domain_dir.is_dir() or domain_dir.name.startswith("."):
+                continue
+            for md_file in sorted(domain_dir.glob("*.md"), reverse=True)[:5]:
+                if md_file.name.startswith("gyani-"):
+                    continue
+                title = _parse_lesson_title(md_file)
+                lessons.append(f"  [{domain_dir.name}] {title}")
+        if lessons:
+            parts.extend(lessons[:8])
+        else:
+            parts.append("  (no lessons designed yet)")
+    else:
+        parts.append("  (curriculum directory not found)")
+
+    # Recent exams
+    parts.append("\n=== RECENT EXAMS ===")
+    cur.execute(
+        "SELECT v.state, v.quality, t.title, v.proficiency_notes "
+        "FROM verifications v LEFT JOIN tasks t ON t.id = v.task_id "
+        "ORDER BY v.started_at DESC LIMIT 5"
+    )
+    exam_rows = cur.fetchall()
+    if exam_rows:
+        for r in exam_rows:
+            title = (r[2] or "?")[:50]
+            parts.append(f"  [{r[0]}] q{r[1]} — {title}")
+            if r[3]:
+                parts.append(f"    {r[3][:120]}")
+    else:
+        parts.append("  (no exams taken yet)")
+
+    # Pending tasks
+    parts.append("\n=== PENDING TASKS ===")
+    cur.execute(
+        "SELECT t.title, t.priority, g.name FROM tasks t "
+        "JOIN task_tags tt ON tt.task_id = t.id "
+        "JOIN tags g ON g.id = tt.tag_id "
+        "WHERE t.is_active AND t.category IN ('mental','financial') "
+        "AND t.priority >= 3 ORDER BY t.created_at DESC LIMIT 10"
+    )
+    task_rows = cur.fetchall()
+    for r in task_rows:
+        parts.append(f"  [{r[2] or '?'}] pri{r[1]} — {r[0][:60]}")
+
+    con.close()
+    return "\n".join(parts)
+
+
+@app.post("/api/gyani/tutor")
+async def gyani_tutor(request: Request):
+    """Single-turn tutoring chat. Gyani responds with full knowledge of Satyam's progress.
+
+    Request: {"message": "why is gradient descent sensitive to learning rate?"}
+    Response: {"reply": "Gyani's tutoring response..."}
+    """
+    body = await request.json()
+    user_message = body.get("message", "").strip()
+    if not user_message:
+        return JSONResponse({"error": "message required"}, status_code=400)
+    if len(user_message) > 2000:
+        return JSONResponse({"error": "message too long"}, status_code=400)
+
+    api_key = _openrouter_key()
+    if not api_key:
+        return JSONResponse({"error": "no API key configured"}, status_code=503)
+
+    context = _build_tutor_context()
+
+    system_prompt = (
+        "You are Gyani (ज्ञानी), Satyam's personal professor. You are tutoring — "
+        "NOT examining. No grading, no ledger writes, no judgment. Your role is to "
+        "help Satyam understand concepts he's struggling with. Be patient, be clear, "
+        "use analogies. Reference his actual proficiency and active lessons when "
+        "relevant. If he asks about something he hasn't studied yet, point him to "
+        "the right lesson. If he asks about something he already passed, acknowledge "
+        "his existing knowledge and build on it.\n\n"
+        "Satyam's current state:\n" + context + "\n\n"
+        "Respond as Gyani. Keep responses focused, warm, and educational. "
+        "Maximum 3 paragraphs unless he specifically asks for depth."
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                OPENROUTER_URL,
+                json={
+                    "model": GYANI_MODEL,
+                    "messages": messages,
+                    "max_tokens": 1024,
+                },
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    return JSONResponse({"error": f"API error {resp.status}: {text[:200]}"}, status_code=502)
+                data = await resp.json()
+                reply = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+    return {"reply": reply, "model": GYANI_MODEL}
 def mindmap_data():
     """Serve pre-generated graph.json."""
     if GRAPH_JSON.exists():

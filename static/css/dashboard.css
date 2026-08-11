@@ -473,6 +473,54 @@ footer {
 .lesson-content pre code { background: none; padding: 0; color: var(--text-dim); }
 .lesson-content a { color: var(--cyan); }
 
+/* ── tutor chat ────────────────────────────────────────────── */
+#tutor-panel {
+  position: fixed; bottom: 0; right: 16px; width: 380px; max-width: 95vw;
+  z-index: 900;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
+  transition: transform 0.2s;
+}
+#tutor-panel:not(.open) { transform: translateY(calc(100% - 36px)); }
+#tutor-panel:not(.open) .tutor-toggle { transform: rotate(180deg); }
+#tutor-panel.open { transform: translateY(0); }
+#tutor-panel.open .tutor-body { display: flex; }
+#tutor-panel:not(.open) .tutor-body { display: none; }
+.tutor-header {
+  padding: 8px 14px; cursor: pointer; display: flex; justify-content: space-between;
+  font-weight: 600; font-size: 14px; color: var(--cyan);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.tutor-toggle { font-size: 10px; transition: transform 0.2s; }
+.tutor-body { flex-direction: column; height: 360px; }
+#tutor-feed { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.tutor-msg { display: flex; }
+.tutor-msg.user { justify-content: flex-end; }
+.tutor-bubble {
+  max-width: 85%; padding: 8px 12px; border-radius: 10px;
+  font-size: 13px; line-height: 1.5; word-break: break-word;
+}
+.tutor-msg.gyani .tutor-bubble { background: var(--bg-elevated); color: var(--text); border-bottom-left-radius: 3px; }
+.tutor-msg.user .tutor-bubble { background: var(--cyan-faint); color: var(--text); border-bottom-right-radius: 3px; }
+.tutor-bubble.welcome { background: #1a2a1a; border: 1px solid var(--green-faint); }
+.tutor-bubble.loading { color: var(--text-dim); font-style: italic; }
+.tutor-bubble.error { color: var(--red); }
+.tutor-input-row { display: flex; padding: 8px 10px; border-top: 1px solid var(--border); gap: 6px; }
+#tutor-input {
+  flex: 1; background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text); padding: 8px 10px;
+  font: 13px var(--font); outline: none;
+}
+#tutor-input:focus { border-color: var(--cyan); }
+.tutor-input-row button {
+  background: var(--cyan-faint); color: var(--cyan); border: 1px solid var(--cyan-faint);
+  border-radius: var(--radius-sm); padding: 8px 14px; cursor: pointer;
+  font: 13px var(--font); font-weight: 600;
+}
+.tutor-input-row button:hover { background: var(--cyan); color: var(--bg); }
+
 /* ── responsive ─────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .dashboard-grid {

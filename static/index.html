@@ -113,6 +113,27 @@
   </div>
 </div>
 
+<!-- TUTOR CHAT -->
+<div id="tutor-panel">
+  <div class="tutor-header" onclick="document.getElementById('tutor-panel').classList.toggle('open')">
+    <span>💬 Ask Gyani</span>
+    <span class="tutor-toggle">▼</span>
+  </div>
+  <div class="tutor-body">
+    <div id="tutor-feed">
+      <div class="tutor-msg gyani">
+        <div class="tutor-bubble welcome">
+          I'm Gyani, your professor. I know what you're studying — ask me anything about your lessons and I'll help you understand. (Not grading — just tutoring.)
+        </div>
+      </div>
+    </div>
+    <div class="tutor-input-row">
+      <input id="tutor-input" placeholder="Ask about your lessons…" autocomplete="off">
+      <button onclick="sendTutorMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ── helpers ─────────────────────────────────────────────────── */
 const esc = s => String(s ?? '-').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -486,6 +507,46 @@ async function load() {
 
 load();
 setInterval(load, 60000);
+
+/* ── tutor chat ──────────────────────────────────────────────── */
+async function sendTutorMessage() {
+  const input = document.getElementById('tutor-input');
+  const feed = document.getElementById('tutor-feed');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  feed.innerHTML += '<div class="tutor-msg user"><div class="tutor-bubble">' + esc(msg) + '</div></div>';
+  input.value = '';
+  feed.scrollTop = feed.scrollHeight;
+
+  feed.innerHTML += '<div class="tutor-msg gyani"><div class="tutor-bubble loading">Gyani is thinking…</div></div>';
+  feed.scrollTop = feed.scrollHeight;
+
+  try {
+    const resp = await fetch('/api/gyani/tutor', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg}),
+    });
+    if (!resp.ok) {
+      var el = feed.lastElementChild.querySelector('.tutor-bubble');
+      el.textContent = 'Sorry, I could not reach Gyani.';
+      el.className = 'tutor-bubble error'; return;
+    }
+    var data = await resp.json();
+    var el2 = feed.lastElementChild.querySelector('.tutor-bubble');
+    el2.textContent = data.reply;
+    el2.className = 'tutor-bubble';
+  } catch(e) {
+    var el3 = feed.lastElementChild.querySelector('.tutor-bubble');
+    el3.textContent = 'Connection lost. Try again.';
+    el3.className = 'tutor-bubble error';
+  }
+  feed.scrollTop = feed.scrollHeight;
+}
+
+document.getElementById('tutor-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTutorMessage(); }
+});
 </script>
 </body>
 </html>
