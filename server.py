@@ -733,6 +733,189 @@ async def gyani_tutor(request: Request):
         return JSONResponse({"error": str(e)}, status_code=502)
 
     return {"reply": reply, "model": GYANI_MODEL}
+
+
+# ── Curate (Goal → Tag Tree + Tasks) ──────────────────────────
+
+@app.post("/api/gyani/curate")
+async def gyani_curate(request: Request):
+    """Decompose a learning goal into a tag tree + sub-tasks, persist to Atma.
+
+    Request: {"goal": "I want to learn Spanish from scratch"}
+    Response: {"tags": [...], "tasks": [...], "created": true}
+    """
+    body = await request.json()
+    goal = body.get("goal", "").strip()
+    if not goal or len(goal) > 500:
+        return JSONResponse({"error": "goal required (max 500 chars)"}, status_code=400)
+
+    api_key = _openrouter_key()
+    if not api_key:
+        return JSONResponse({"error": "no API key"}, status_code=503)
+
+    # Build context: existing tag tree so we don't create duplicates
+    url = _supabase_url()
+    existing_tags = ""
+    if url:
+        try:
+            con = psycopg2.connect(url, connect_timeout=8)
+            cur = con.cursor()
+            cur.execute("SELECT id, name, parent_tag_id, category FROM tags ORDER BY id")
+            tag_rows = cur.fetchall()
+            tag_map = {r[0]: {"name": r[1], "parent": r[2], "cat": r[3]} for r in tag_rows}
+            existing_tags = "Existing tags (DO NOT recreate these — build ON TOP of them):\n"
+            for tid, t in sorted(tag_map.items()):
+                parent = f" (parent: {tag_map[t['parent']]['name']})" if t['parent'] and t['parent'] in tag_map else ""
+                existing_tags += f"  #{tid} {t['name']} [{t['cat']}]{parent}\n"
+            con.close()
+        except Exception:
+            existing_tags = ""
+
+    prompt = (
+        "You are Gyani, an educational professor who decomposes learning goals into "
+        "structured curriculum trees. Given a student's goal, create:\n\n"
+        "1. A TAG TREE — hierarchical knowledge categories (3-6 tags). Each tag must have:\n"
+        "   - name: descriptive, domain-prefixed (e.g. 'Spanish — Vocabulary')\n"
+        "   - parent_tag: null for root, exact child_of name for children\n"
+        "   - category: 'mental' | 'physical' | 'financial'\n\n"
+        "2. CONCRETE TASKS — individually examinable learning objectives (3-8 tasks). Each:\n"
+        "   - title: specific, examinable via Socratic dialogue\n"
+        "   - tag_name: which tag this task belongs to (must match a tag name)\n"
+        "   - priority: 3 (standard), 4 (harder), 5 (the hardest prerequisite)\n"
+        "   - description: 1-2 sentences about what the student will learn\n\n"
+        "RULES:\n"
+        "- NEVER create a tag with the same name as an existing one — build on top.\n"
+        "- NEVER create a task called 'Go work out' (that already exists).\n"
+        "- Tasks must be SOCRATICALLY EXAMINABLE — no 'write code', no 'build a project'.\n"
+        "- Start from absolute basics. The student may know nothing about this domain.\n"
+        "- Prioritize foundational concepts before advanced ones.\n"
+        "- Tags form a tree: one root, children hang from it.\n\n"
+        + existing_tags + "\n\n"
+        "Goal: " + goal + "\n\n"
+        "Respond with ONLY valid JSON — no markdown, no explanation:\n"
+        '{"tags": [{"name": "...", "parent_tag": null|"name", "category": "mental"}, ...],\n'
+        ' "tasks": [{"title": "...", "tag_name": "...", "priority": 3, "description": "..."}, ...]}\n'
+    )
+
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": f"Curate a learning plan for: {goal}"},
+    ]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                OPENROUTER_URL,
+                json={"model": GYANI_MODEL, "messages": messages, "max_tokens": 4096},
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=90),
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    return JSONResponse({"error": f"LLM error {resp.status}"}, status_code=502)
+                data = await resp.json()
+                raw = data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+    # Parse the JSON (strip markdown fences, tolerate trailing truncation)
+    m = re.search(r'\{[\s\S]*\}', raw)
+    if not m:
+        return JSONResponse({"error": "could not parse curation JSON", "raw": raw[:500]}, status_code=502)
+
+    try:
+        plan = json.loads(m.group(0))
+    except json.JSONDecodeError as e:
+        # Attempt recovery: truncate to last complete task/tag boundary
+        raw_trimmed = raw[:e.pos]
+        # Close any open array
+        if '"tasks"' in raw_trimmed and ']' not in raw_trimmed[raw_trimmed.rfind('"tasks"'):]:
+            raw_trimmed += ']}'
+        try:
+            plan = json.loads(re.search(r'\{[\s\S]*\}', raw_trimmed).group(0))
+        except Exception:
+            return JSONResponse({"error": "invalid JSON from LLM", "raw": raw[:500]}, status_code=502)
+
+    # Persist to Atma
+    created_tags = []
+    created_tasks = []
+    created_errors = []
+
+    if url:
+        try:
+            con = psycopg2.connect(url, connect_timeout=8)
+            cur = con.cursor()
+
+            # Get current max tag id
+            cur.execute("SELECT COALESCE(MAX(id), 0) FROM tags")
+            next_tag_id = cur.fetchone()[0] + 1
+
+            # Create tags (idempotent — skip if name already exists)
+            tag_id_map = {}
+            for t in plan.get("tags", []):
+                name = t.get("name", "").strip()
+                if not name: continue
+                cur.execute("SELECT id FROM tags WHERE name = %s", (name,))
+                existing = cur.fetchone()
+                if existing:
+                    tag_id_map[name] = existing[0]
+                    continue
+
+                parent_id = None
+                parent_name = t.get("parent_tag")
+                if parent_name and parent_name in tag_id_map:
+                    parent_id = tag_id_map[parent_name]
+
+                cat = t.get("category", "mental")
+                cur.execute(
+                    "INSERT INTO tags (id, name, parent_tag_id, category, required_proficiency, created_at) "
+                    "VALUES (%s, %s, %s, %s, 3.0, NOW()) RETURNING id",
+                    (next_tag_id, name, parent_id, cat))
+                tag_id = cur.fetchone()[0]
+                tag_id_map[name] = tag_id
+                next_tag_id += 1
+                created_tags.append({"id": tag_id, "name": name, "parent": parent_id, "category": cat})
+
+            # Create tasks
+            for tsk in plan.get("tasks", []):
+                title = tsk.get("title", "").strip()
+                tag_name = tsk.get("tag_name", "").strip()
+                if not title or not tag_name: continue
+                tag_id = tag_id_map.get(tag_name)
+                if not tag_id:
+                    created_errors.append(f"tag '{tag_name}' not found for task '{title}'")
+                    continue
+
+                pri = tsk.get("priority", 3)
+                desc = tsk.get("description", "")
+                cur.execute(
+                    "INSERT INTO tasks (title, category, priority, description, assigned_to, created_by, is_active, created_at) "
+                    "VALUES (%s, 'mental', %s, %s, 1, 1, TRUE, NOW()) RETURNING id",
+                    (title, pri, desc))
+                task_id = cur.fetchone()[0]
+                cur.execute("INSERT INTO task_tags (task_id, tag_id) VALUES (%s, %s)", (task_id, tag_id))
+                created_tasks.append({"id": task_id, "title": title, "tag_id": tag_id, "priority": pri})
+
+            con.commit()
+            con.close()
+        except Exception as e:
+            created_errors.append(str(e))
+
+    # Trigger mindmap rebuild
+    mindmap_path = APP_DIR / "mindmap" / "mindmap.py"
+    if mindmap_path.exists():
+        subprocess.run(["python3", str(mindmap_path)], capture_output=True, timeout=60)
+
+    return {
+        "goal": goal,
+        "tags": created_tags,
+        "tasks": created_tasks,
+        "errors": created_errors,
+        "total_tags": len(created_tags),
+        "total_tasks": len(created_tasks),
+    }
+
+
 def mindmap_data():
     """Serve pre-generated graph.json."""
     if GRAPH_JSON.exists():
