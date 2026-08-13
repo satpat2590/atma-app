@@ -117,6 +117,10 @@
 <div id="tutor-panel">
   <div class="tutor-header" onclick="document.getElementById('tutor-panel').classList.toggle('open')">
     <span>💬 Ask Gyani</span>
+    <span class="tutor-mode-switch" onclick="event.stopPropagation()">
+      <button class="tutor-mode-btn active" id="tutor-mode-tutor" onclick="setTutorMode('tutor')">tutor</button>
+      <button class="tutor-mode-btn" id="tutor-mode-practice" onclick="setTutorMode('practice')">practice</button>
+    </span>
     <span class="tutor-toggle">▼</span>
   </div>
   <div class="tutor-body">
@@ -509,6 +513,8 @@ load();
 setInterval(load, 60000);
 
 /* ── tutor chat ──────────────────────────────────────────────── */
+let tutorMode = 'tutor';
+
 async function sendTutorMessage() {
   const input = document.getElementById('tutor-input');
   const feed = document.getElementById('tutor-feed');
@@ -525,7 +531,7 @@ async function sendTutorMessage() {
   try {
     const resp = await fetch('/api/gyani/tutor', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg}),
+      body: JSON.stringify({message: msg, mode: tutorMode}),
     });
     if (!resp.ok) {
       var el = feed.lastElementChild.querySelector('.tutor-bubble');
@@ -542,6 +548,13 @@ async function sendTutorMessage() {
     el3.className = 'tutor-bubble error';
   }
   feed.scrollTop = feed.scrollHeight;
+}
+
+function setTutorMode(mode) {
+  tutorMode = mode;
+  document.querySelectorAll('.tutor-mode-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('tutor-mode-' + mode);
+  if (btn) btn.classList.add('active');
 }
 
 document.getElementById('tutor-input').addEventListener('keydown', function(e) {

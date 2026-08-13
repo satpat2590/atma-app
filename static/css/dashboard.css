@@ -494,6 +494,13 @@ footer {
   user-select: none;
 }
 .tutor-toggle { font-size: 10px; transition: transform 0.2s; }
+.tutor-mode-switch { display: flex; gap: 3px; margin-left: auto; margin-right: 8px; }
+.tutor-mode-btn {
+  font-size: 10px; padding: 2px 8px; border-radius: 9px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer; text-transform: lowercase;
+}
+.tutor-mode-btn.active { background: var(--cyan-faint); color: var(--cyan); border-color: var(--cyan-faint); }
 .tutor-body { flex-direction: column; height: 360px; }
 #tutor-feed { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
 .tutor-msg { display: flex; }
