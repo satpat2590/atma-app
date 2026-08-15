@@ -21,12 +21,14 @@ from app.routes_growth import router as growth_router
 from app.routes_gyani import router as gyani_router
 from app.routes_tutor import router as tutor_router
 from app.routes_submissions import router as submissions_router
+from app.routes_triage import router as triage_router
 
 app.include_router(system_router)
 app.include_router(growth_router)
 app.include_router(gyani_router)
 app.include_router(tutor_router)
 app.include_router(submissions_router)
+app.include_router(triage_router)
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
