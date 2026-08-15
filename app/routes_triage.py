@@ -162,6 +162,88 @@ async def _llm_signature(api_key, subject_text, tag_tree_lines):
         return None, f"invalid JSON: {raw[:300]}"
 
 
+async def _llm_prerequisites(api_key, gap_tags, tag_tree_lines):
+    """Generate the minimal prerequisite sub-tasks to close a proficiency gap.
+
+    Given the gap tags (the domains Satyam is short on), produce concrete,
+    Socratic-examinable tasks for each — the *minimal* path, not the full
+    domain curriculum. This is the "dynamic educational manner": the task's
+    own requirements drive exactly what gets taught.
+    """
+    if not gap_tags:
+        return [], None
+    prompt = (
+        "You are Gyani, an educational professor. Satyam has a task he cannot do "
+        "yet because he lacks proficiency in these knowledge domains (tags):\n"
+        + "\n".join(f"- {t}" for t in gap_tags) + "\n\n"
+        "Design the MINIMAL prerequisite path: for each tag, 1-3 concrete, "
+        "examinable learning tasks that build proficiency in THAT tag, ordered "
+        "foundational-first. Do NOT generate a full domain curriculum — only what "
+        "is needed to close the gap for this specific task.\n\n"
+        "Rules:\n"
+        "- Tasks must be SOCRATICALLY EXAMINABLE (no 'write code', no 'build a project').\n"
+        "- Start from absolute basics — assume Satyam knows nothing in these tags.\n"
+        "- Each task maps to exactly one of the tags above (use the EXACT tag name).\n"
+        "- Progression: intuition -> first math -> algorithm -> theory.\n\n"
+        'Respond with ONLY valid JSON:\n'
+        '{"prerequisites": [{"tag_name": "...", "tasks": [{"title": "...", "description": "..."}]}]}\n'
+    )
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": "Build the prerequisite path for: " + ", ".join(gap_tags)},
+    ]
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            OPENROUTER_URL,
+            json={"model": GYANI_MODEL, "messages": messages, "max_tokens": 3072},
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=90),
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                return [], f"LLM error {resp.status}: {text[:200]}"
+            data = await resp.json()
+            raw = data["choices"][0]["message"]["content"]
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        return [], f"could not parse prerequisites JSON: {raw[:300]}"
+    try:
+        return json.loads(m.group(0)).get("prerequisites", []), None
+    except json.JSONDecodeError:
+        return [], f"invalid prerequisites JSON: {raw[:300]}"
+
+
+def _create_kanban_task(agent_name, title, body, task_id):
+    """Hand a delegated task to the omni kanban board (the agents' work queue).
+
+    The kanban dispatcher (embedded in a gateway) picks up 'ready' tasks and
+    spawns the assigned profile. Idempotent via --idempotency-key so re-triage
+    never creates a duplicate. Returns the kanban task id, or None on failure —
+    a kanban failure never blocks the Atma delegation itself, it only means the
+    agent isn't auto-notified this round.
+    """
+    import subprocess
+    profile = agent_name.lower()
+    hermes_py = str(Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python")
+    cmd = [
+        hermes_py, "-m", "hermes_cli.main",
+        "--profile", "satya",
+        "kanban", "create", title,
+        "--assignee", profile,
+        "--body", body,
+        "--idempotency-key", f"atma-task-{task_id}",
+        "--json",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            return data.get("id")
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/api/gyani/triage")
 async def gyani_triage(request: Request):
     """Classify a task: can Satyam do it, or does it route to an agent?
@@ -277,24 +359,72 @@ async def gyani_triage(request: Request):
         recommendation = "learn"
 
     # ── Apply a decision if one was given ────────────────────────────────
-    applied = None
+    # Flush the skill-signature writes now so no slow LLM/subprocess call
+    # below holds an idle DB transaction open.
+    con.commit()
+
+    applied: dict | None = None
+    curriculum = []
+    kanban_id = None
+
     if decision == "delegate":
         meta = _agent_by_name(agent_name)
         if not meta:
-            con.rollback()
             con.close()
             return JSONResponse({"error": f"unknown agent '{agent_name}'"}, status_code=400)
+        # Phase 4: hand off to the omni kanban board (idempotent). Runs before
+        # any DB write so the subprocess never holds a transaction.
+        kanban_id = _create_kanban_task(meta["name"], title, subject_text[:500], tid)
         cur.execute(
             "UPDATE tasks SET assigned_to = %s, owner_type = 'agent', routing_state = 'delegated' WHERE id = %s",
             (meta["id"], tid),
         )
-        applied = {"routing_state": "delegated", "assigned_to": meta["name"], "agent_id": meta["id"]}
-    elif decision == "learn":
         cur.execute(
-            "UPDATE tasks SET routing_state = %s WHERE id = %s",
-            ("ready" if not has_gap else "learning_gap", tid),
+            "INSERT INTO task_delegations (task_id, from_user, to_user, routing_decision, rationale, kanban_task_id, state) "
+            "VALUES (%s, 1, %s, 'delegate', %s, %s, 'delegated')",
+            (tid, meta["id"], rationale, kanban_id),
         )
-        applied = {"routing_state": "ready" if not has_gap else "learning_gap"}
+        applied = {
+            "routing_state": "delegated",
+            "assigned_to": meta["name"],
+            "agent_id": meta["id"],
+            "kanban_task_id": kanban_id,
+        }
+    elif decision == "learn":
+        new_state = "ready" if not has_gap else "learning_gap"
+        if has_gap:
+            # Phase 3: generate the minimal prerequisite path (LLM). Run before
+            # any DB write so the await never holds an idle transaction.
+            prereqs, _perr = await _llm_prerequisites(
+                api_key, [g["tag_name"] for g in gap_tags], tag_tree_lines
+            )
+        else:
+            prereqs, _perr = [], None
+        cur.execute("UPDATE tasks SET routing_state = %s WHERE id = %s", (new_state, tid))
+        for group in prereqs:
+            gname = (group.get("tag_name") or "").strip()
+            for tsk in group.get("tasks", []):
+                ttitle = (tsk.get("title") or "").strip()
+                tdesc = (tsk.get("description") or "").strip()
+                if not ttitle:
+                    continue
+                gid = _ensure_tag(con, cur, gname, category)
+                cur.execute(
+                    "INSERT INTO tasks (title, category, priority, description, assigned_to, created_by, is_active, created_at) "
+                    "VALUES (%s, %s, 3, %s, 1, 1, TRUE, NOW()) RETURNING id",
+                    (ttitle, category, tdesc),
+                )
+                sub_row = cur.fetchone()
+                sub_id = sub_row[0] if sub_row else None
+                if sub_id:
+                    cur.execute("INSERT INTO task_tags (task_id, tag_id) VALUES (%s, %s)", (sub_id, gid))
+                    curriculum.append({"task_id": sub_id, "title": ttitle, "tag_name": gname})
+        applied = {"routing_state": new_state}
+        if curriculum:
+            applied["curriculum"] = curriculum
+            applied["prerequisite_task_ids"] = [c["task_id"] for c in curriculum]
+        elif has_gap:
+            applied["curriculum_error"] = (_perr or "no prerequisites generated")
     else:
         # No decision yet: record the preliminary state.
         cur.execute(
