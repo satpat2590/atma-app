@@ -1,0 +1,14 @@
+[Unit]
+Description=Atma kanban completion sync — close the delegation loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/satyamini/miniconda3/bin/python /home/satyamini/atma-app/scripts/sync_kanban.py
+Environment="PATH=/home/satyamini/miniconda3/bin:/usr/local/bin:/usr/bin:/bin"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

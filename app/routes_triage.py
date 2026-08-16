@@ -283,12 +283,12 @@ async def gyani_triage(request: Request):
     cur = con.cursor()
 
     if task_id:
-        cur.execute("SELECT id, title, description, category FROM tasks WHERE id = %s", (task_id,))
+        cur.execute("SELECT id, title, description, category, routing_state, owner_type FROM tasks WHERE id = %s", (task_id,))
         row = cur.fetchone()
         if not row:
             con.close()
             return JSONResponse({"error": f"task {task_id} not found"}, status_code=404)
-        tid, title, desc, category = row
+        tid, title, desc, category, prev_state, prev_owner = row
         subject_text = f"{title}. {desc or ''}".strip()
     else:
         # Free-text goal: materialize it as a task first so triage persists cleanly.
@@ -305,6 +305,7 @@ async def gyani_triage(request: Request):
             return JSONResponse({"error": "failed to materialize task"}, status_code=500)
         tid = _row[0]
         title, desc, category = goal[:200], "", category
+        prev_state, prev_owner = None, None
         subject_text = goal
     con.commit()
 
@@ -426,10 +427,21 @@ async def gyani_triage(request: Request):
         elif has_gap:
             applied["curriculum_error"] = (_perr or "no prerequisites generated")
     else:
-        # No decision yet: record the preliminary state.
+        # No decision yet: classify only if untriaged; otherwise preserve the
+        # existing routing state, upgrading learning_gap→ready when the gap has
+        # closed. Never un-delegate a delegated task on a passive re-triage.
+        if prev_owner == "agent" or prev_state == "delegated":
+            new_state = "delegated"
+        elif prev_state == "learning_gap":
+            new_state = "ready" if not has_gap else "learning_gap"
+        elif prev_state == "ready":
+            new_state = "triage_pending" if has_gap else "ready"
+        else:
+            # untriaged (NULL) or triage_pending: classify fresh
+            new_state = "ready" if not has_gap else "triage_pending"
         cur.execute(
             "UPDATE tasks SET routing_state = %s WHERE id = %s",
-            ("ready" if not has_gap else "triage_pending", tid),
+            (new_state, tid),
         )
 
     con.commit()
@@ -578,5 +590,58 @@ def gyani_triage_board():
             "delegated": len(delegated),
             "untriaged": len(untriaged),
         },
+    }
+
+
+@router.post("/api/gyani/triage/recheck")
+def gyani_triage_recheck():
+    """Close the learning loop: flip learning_gap tasks to ready when their gap closes.
+
+    Re-evaluates every `learning_gap` task's skill signature against the current
+    ledger proficiency. When Satyam has passed exams on all prerequisite tags
+    (current >= required for every signature tag), the blocked task declares
+    itself ready. Called by Gyani's evening cron and on demand.
+    """
+    url = _supabase_url()
+    if not url:
+        return JSONResponse({"error": "no supabase"}, status_code=503)
+    try:
+        con = psycopg2.connect(url, connect_timeout=8)
+        cur = con.cursor()
+
+        cur.execute(
+            "SELECT tag_id, ROUND(AVG(quality)::numeric, 2) FROM verifications "
+            "WHERE state = 'passed' AND tag_id IS NOT NULL GROUP BY tag_id"
+        )
+        prof = {r[0]: float(r[1]) for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT id, title FROM tasks WHERE is_active AND routing_state = 'learning_gap'"
+        )
+        gapped = cur.fetchall()
+
+        flipped = []
+        for tid, title in gapped:
+            cur.execute(
+                "SELECT tag_id, required_proficiency FROM task_skill_requirements WHERE task_id = %s",
+                (tid,),
+            )
+            reqs = cur.fetchall()
+            if not reqs:
+                continue
+            closed = all(prof.get(tag_id, 0.0) >= float(req) for tag_id, req in reqs)
+            if closed:
+                cur.execute("UPDATE tasks SET routing_state = 'ready' WHERE id = %s", (tid,))
+                flipped.append({"task_id": tid, "title": title})
+
+        con.commit()
+        con.close()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    return {
+        "rechecked": len(gapped),
+        "flipped_to_ready": flipped,
+        "count": len(flipped),
     }
 
