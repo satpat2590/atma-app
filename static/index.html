@@ -30,6 +30,15 @@
     <div class="panel-body loading" id="triage-body">loading…</div>
   </div>
 
+  <!-- ─── AGENT EXPERTISE ─────────────────────────────── -->
+  <div class="panel" id="agents-panel">
+    <div class="panel-header">
+      agents · expertise
+      <span class="ph-count" id="agents-count"></span>
+    </div>
+    <div class="panel-body loading" id="agents-body">loading…</div>
+  </div>
+
   <!-- ─── ROW 1: GROWTH (left) + LESSONS (right) ─── -->
   <div class="dashboard-grid">
     <div class="dashboard-col">
@@ -500,7 +509,7 @@ function renderSubmissions(data) {
 /* ── PANEL: Triage / Routing Board ──────────────────────────── */
 const AGENTS = ['Paisa', 'Argus', 'Satya', 'Veltiosi'];
 
-function renderTriage(data) {
+function renderTriage(data, selfAssess) {
   const body = document.getElementById('triage-body');
   const count = document.getElementById('triage-count');
   if (!data || data._error || data.error) {
@@ -522,6 +531,21 @@ function renderTriage(data) {
     + (untriaged.length ? ' · ' + untriaged.length + ' untriaged' : '');
 
   let html = '';
+
+  // ── Self-awareness signal (recognition of capability gaps) ──
+  const sa = selfAssess && selfAssess.summary;
+  if (sa && sa.total_decisions > 0) {
+    html += '<div class="self-awareness">'
+      + '<span class="sa-icon">🧭</span>'
+      + '<span class="sa-label">self-awareness</span>'
+      + '<span class="sa-metric">' + sa.gaps_recognized + ' gap' + (sa.gaps_recognized === 1 ? '' : 's') + ' recognized</span>'
+      + '<span class="sa-sep">·</span>'
+      + '<span class="sa-metric">' + sa.delegated + ' delegated</span>'
+      + '<span class="sa-sep">·</span>'
+      + '<span class="sa-metric">' + sa.learn_commitments + ' learning</span>'
+      + (sa.over_delegated ? '<span class="sa-sep">·</span><span class="sa-warn">' + sa.over_delegated + ' over-delegated</span>' : '')
+      + '</div>';
+  }
 
   // ── Your learning (active: gap + pending decision) ──
   html += '<div class="triage-section-head"><span class="triage-dot learning-dot"></span>your learning</div>';
@@ -634,9 +658,50 @@ async function decideTask(taskId, decision, agent, btn) {
   load();
 }
 
+/* ── PANEL: Agent Expertise ─────────────────────────────────── */
+function renderAgents(data) {
+  const body = document.getElementById('agents-body');
+  const count = document.getElementById('agents-count');
+  if (!data || data._error || data.error) {
+    body.className = 'panel-body panel-error';
+    body.textContent = 'agent expertise unavailable';
+    count.textContent = '';
+    return;
+  }
+  const agents = data.agents || [];
+  count.textContent = agents.length + ' agents';
+
+  let html = '';
+  agents.forEach(a => {
+    const configured = a.configured.length
+      ? a.configured.map(t => '<span class="exp-chip configured">' + esc(t) + '</span>').join('')
+      : '<span class="exp-chip none">no configured domain</span>';
+    const demonstrated = a.demonstrated.length
+      ? a.demonstrated.map(d => '<span class="exp-chip demonstrated" title="' + d.completed + ' completed tasks">' + esc(d.tag_name) + ' ×' + d.completed + '</span>').join('')
+      : '<span class="exp-empty">no completed work yet</span>';
+    const workload = (a.pending || a.stale || a.completed)
+      ? '<span class="agent-workload">'
+        + (a.completed ? a.completed + ' done' : '')
+        + (a.pending ? ' · ' + a.pending + ' pending' : '')
+        + (a.stale ? ' · <span class="sa-warn">' + a.stale + ' stale</span>' : '')
+        + '</span>'
+      : '';
+    html += '<div class="agent-card">'
+      + '<div class="agent-head">'
+      +   '<span class="agent-name">' + esc(a.name) + '</span>' + workload
+      + '</div>'
+      + '<div class="agent-line"><span class="agent-lbl">configured</span>' + configured + '</div>'
+      + '<div class="agent-line"><span class="agent-lbl">demonstrated</span>' + demonstrated + '</div>'
+      + '</div>';
+  });
+
+  body.className = 'panel-body';
+  body.innerHTML = html;
+}
+
 /* ── main load + render ──────────────────────────────────────── */
 async function load() {
-  const [growth, lessons, verif, habits, alignment, submissions, triage] = await Promise.all([
+  const [growth, lessons, verif, habits, alignment, submissions, triage, selfAssess, agents] = await Promise.all([
     jget('/api/growth'),
     jget('/api/gyani/lessons'),
     jget('/api/gyani/verifications'),
@@ -644,10 +709,13 @@ async function load() {
     jget('/api/gyani/alignment'),
     jget('/api/gyani/submissions'),
     jget('/api/gyani/triage/board'),
+    jget('/api/agent/self-assessment'),
+    jget('/api/agent/expertise'),
   ]);
 
   renderHeader(growth);
-  renderTriage(triage);
+  renderTriage(triage, selfAssess);
+  renderAgents(agents);
   renderGrowth(growth);
   renderLessons(lessons);
   renderVerifications(verif);

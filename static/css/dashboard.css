@@ -441,6 +441,101 @@ a.verif-title:hover { color: var(--cyan); text-decoration: underline; }
 }
 .triage-agent-select:focus { outline: none; border-color: var(--cyan-dim); }
 
+/* ── self-awareness signal ──────────────────────────────────── */
+.self-awareness {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--cyan-faint);
+  border-radius: var(--radius-sm);
+  background: rgba(88, 166, 255, 0.06);
+  font-size: 11px;
+}
+.self-awareness .sa-icon { font-size: 13px; }
+.self-awareness .sa-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--cyan-dim);
+}
+.self-awareness .sa-metric { color: var(--text-dim); }
+.self-awareness .sa-sep { color: var(--text-faint); }
+.self-awareness .sa-warn { color: var(--amber); font-weight: 600; }
+
+/* ── agent expertise ────────────────────────────────────────── */
+#agents-panel .panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  padding: 10px 12px;
+}
+.agent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.agent-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.agent-workload {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.agent-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+.agent-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--text-faint);
+  width: 74px;
+  flex-shrink: 0;
+}
+.exp-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 9px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+.exp-chip.configured {
+  color: var(--cyan-dim);
+  background: var(--cyan-faint);
+}
+.exp-chip.demonstrated {
+  color: var(--green);
+  background: var(--green-faint);
+  box-shadow: 0 0 5px var(--green-faint);
+}
+.exp-chip.none {
+  color: var(--text-faint);
+  background: var(--bg-card);
+  font-style: italic;
+}
+.exp-empty {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 /* ── habit grid ─────────────────────────────────────────────── */
 #habits-panel .panel-body { padding-bottom: 10px; }
 .habit-row {

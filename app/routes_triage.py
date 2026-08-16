@@ -349,6 +349,7 @@ async def gyani_triage(request: Request):
 
     gap_tags = [r for r in resolved if r["gap"] > 0]
     has_gap = len(gap_tags) > 0
+    gap_magnitude = round(sum(s["gap"] for s in resolved if s["gap"] > 0), 2)
 
     # ── Recommendation ───────────────────────────────────────────────────
     agent_meta = _agent_by_name(suggested_agent)
@@ -385,6 +386,13 @@ async def gyani_triage(request: Request):
             "VALUES (%s, 1, %s, 'delegate', %s, %s, 'delegated')",
             (tid, meta["id"], rationale, kanban_id),
         )
+        # Self-assessment signal: Satyam recognized a capability gap and
+        # offloaded it. Non-fungible — never awards growth/points.
+        cur.execute(
+            "INSERT INTO self_assessments (task_id, decision, had_gap, gap_tags, gap_magnitude, recommended_agent, chosen_agent) "
+            "VALUES (%s, 'delegate', %s, %s, %s, %s, %s)",
+            (tid, has_gap, json.dumps([g["tag_name"] for g in gap_tags]), gap_magnitude, suggested_agent, meta["name"]),
+        )
         applied = {
             "routing_state": "delegated",
             "assigned_to": meta["name"],
@@ -402,6 +410,13 @@ async def gyani_triage(request: Request):
         else:
             prereqs, _perr = [], None
         cur.execute("UPDATE tasks SET routing_state = %s WHERE id = %s", (new_state, tid))
+        # Self-assessment signal: Satyam recognized a capability gap and chose
+        # to close it himself. Non-fungible — never awards growth/points.
+        cur.execute(
+            "INSERT INTO self_assessments (task_id, decision, had_gap, gap_tags, gap_magnitude, recommended_agent) "
+            "VALUES (%s, 'learn', %s, %s, %s, %s)",
+            (tid, has_gap, json.dumps([g["tag_name"] for g in gap_tags]), gap_magnitude, suggested_agent),
+        )
         for group in prereqs:
             gname = (group.get("tag_name") or "").strip()
             for tsk in group.get("tasks", []):
