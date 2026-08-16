@@ -453,3 +453,130 @@ async def gyani_triage(request: Request):
                  "path, or decision='delegate' + agent to route it to an agent (no points for Satyam)."
         ),
     }
+
+
+@router.get("/api/gyani/triage/board")
+def gyani_triage_board():
+    """The routing board: Satyam's learning tasks vs delegated agent tasks.
+
+    Three groups, mirroring the ownership model:
+      - learning  — owner_type='satyam', routing_state in (ready, learning_gap,
+                    triage_pending). Each carries its skill signature + gap vector.
+      - delegated — owner_type='agent' (routing_state='delegated'), with the
+                    agent name, kanban ref, and delegation state.
+      - untriaged — mental/financial tasks with routing_state IS NULL that
+                    Gyani has not classified yet.
+    """
+    url = _supabase_url()
+    if not url:
+        return JSONResponse({"error": "no supabase"}, status_code=503)
+    try:
+        con = psycopg2.connect(url, connect_timeout=8)
+        cur = con.cursor()
+
+        # Per-tag proficiency from the ledger (keyed by tag_id)
+        cur.execute(
+            "SELECT tag_id, ROUND(AVG(quality)::numeric, 2) FROM verifications "
+            "WHERE state = 'passed' AND tag_id IS NOT NULL GROUP BY tag_id"
+        )
+        prof_by_id = {r[0]: float(r[1]) for r in cur.fetchall()}
+
+        # User names
+        cur.execute("SELECT id, name FROM users")
+        user_name = {r[0]: r[1] for r in cur.fetchall()}
+
+        # All active tasks that participate in routing
+        cur.execute(
+            "SELECT id, title, category, priority, owner_type, routing_state, "
+            "assigned_to, created_at "
+            "FROM tasks WHERE is_active "
+            "AND (routing_state IS NOT NULL OR owner_type = 'agent' "
+            "     OR (category IN ('mental','financial') AND routing_state IS NULL)) "
+            "ORDER BY created_at DESC"
+        )
+        task_rows = cur.fetchall()
+
+        # Skill signatures (tag_id + name + required) for all these tasks
+        sig_by_task = {}
+        if task_rows:
+            ids = [r[0] for r in task_rows]
+            cur.execute(
+                "SELECT r.task_id, r.tag_id, g.name, r.required_proficiency "
+                "FROM task_skill_requirements r JOIN tags g ON g.id = r.tag_id "
+                "WHERE r.task_id = ANY(%s)",
+                (ids,),
+            )
+            for task_id, tag_id, name, req in cur.fetchall():
+                current = prof_by_id.get(tag_id, 0.0)
+                gap = max(0.0, round(float(req) - current, 2))
+                sig_by_task.setdefault(task_id, []).append({
+                    "tag_name": name, "required": float(req),
+                    "current": current, "gap": gap,
+                })
+
+        # Delegation metadata (kanban ref, state, rationale)
+        cur.execute(
+            "SELECT task_id, kanban_task_id, state, rationale, created_at "
+            "FROM task_delegations WHERE task_id = ANY(%s)",
+            ([r[0] for r in task_rows],),
+        )
+        deleg_by_task = {}
+        for task_id, kanban, state, rationale, created in cur.fetchall():
+            deleg_by_task[task_id] = {
+                "kanban_task_id": kanban, "state": state,
+                "rationale": rationale,
+                "delegated_at": created.isoformat() if created else None,
+            }
+        con.close()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    learning, delegated, untriaged = [], [], []
+    for r in task_rows:
+        tid, title, cat, pri, owner, state, assigned_to, created = r
+        signature = sig_by_task.get(tid, [])
+        gap_tags = [s["tag_name"] for s in signature if s["gap"] > 0]
+        base = {
+            "task_id": tid, "title": title, "category": cat,
+            "priority": pri, "created_at": created.isoformat() if created else None,
+            "signature": signature, "gap_tags": gap_tags,
+            "has_gap": len(gap_tags) > 0,
+        }
+        if owner == "agent" or state == "delegated":
+            d = deleg_by_task.get(tid, {})
+            base.update({
+                "assigned_to": user_name.get(assigned_to) or f"#{assigned_to}",
+                "routing_state": "delegated",
+                "kanban_task_id": d.get("kanban_task_id"),
+                "delegation_state": d.get("state"),
+                "rationale": d.get("rationale"),
+                "delegated_at": d.get("delegated_at"),
+            })
+            delegated.append(base)
+        elif state == "learning_gap":
+            base.update({"routing_state": "learning_gap"})
+            learning.append(base)
+        elif state == "ready":
+            base.update({"routing_state": "ready"})
+            learning.append(base)
+        elif state == "triage_pending":
+            base.update({"routing_state": "triage_pending"})
+            learning.append(base)
+        else:
+            base.update({"routing_state": None})
+            untriaged.append(base)
+
+    # Sort: learning by created_at desc already; put gapped tasks first within learning
+    learning.sort(key=lambda t: (not t["has_gap"], t["created_at"] or ""), reverse=False)
+
+    return {
+        "learning": learning,
+        "delegated": delegated,
+        "untriaged": untriaged,
+        "summary": {
+            "learning": len(learning),
+            "delegated": len(delegated),
+            "untriaged": len(untriaged),
+        },
+    }
+
