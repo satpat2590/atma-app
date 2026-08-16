@@ -498,6 +498,8 @@ function renderSubmissions(data) {
 }
 
 /* ── PANEL: Triage / Routing Board ──────────────────────────── */
+const AGENTS = ['Paisa', 'Argus', 'Satya', 'Veltiosi'];
+
 function renderTriage(data) {
   const body = document.getElementById('triage-body');
   const count = document.getElementById('triage-count');
@@ -507,31 +509,35 @@ function renderTriage(data) {
     count.textContent = '';
     return;
   }
-  const s = data.summary || {};
   const learning = data.learning || [];
   const delegated = data.delegated || [];
   const untriaged = data.untriaged || [];
-  count.textContent = s.learning + ' learning · ' + s.delegated + ' delegated'
-    + (s.untriaged ? ' · ' + s.untriaged + ' untriaged' : '');
+
+  // Active = needs attention (gap / pending decision); settled = routine curriculum
+  const active = learning.filter(t => t.routing_state !== 'ready');
+  const settled = learning.filter(t => t.routing_state === 'ready');
+
+  count.textContent = active.length + ' active · ' + delegated.length + ' delegated'
+    + (settled.length ? ' · ' + settled.length + ' ready' : '')
+    + (untriaged.length ? ' · ' + untriaged.length + ' untriaged' : '');
 
   let html = '';
 
-  // ── Learning (Satyam's own work) ──
+  // ── Your learning (active: gap + pending decision) ──
   html += '<div class="triage-section-head"><span class="triage-dot learning-dot"></span>your learning</div>';
-  if (!learning.length) {
-    html += '<div class="triage-empty">no tasks routed to you yet</div>';
+  if (!active.length) {
+    html += '<div class="triage-empty">no active learning tasks</div>';
   } else {
-    learning.forEach(t => {
-      const stateBadge = t.routing_state === 'ready'
-        ? '<span class="badge ready">ready</span>'
-        : t.routing_state === 'learning_gap'
-          ? '<span class="badge learning-gap">gap</span>'
-          : '<span class="badge pending">pending</span>';
+    active.forEach(t => {
+      const stateBadge = t.routing_state === 'learning_gap'
+        ? '<span class="badge learning-gap">gap</span>'
+        : '<span class="badge pending">pending</span>';
       const gapHtml = t.has_gap
         ? '<div class="gap-tags">' + t.gap_tags.map(g => '<span class="gap-chip">' + esc(g) + '</span>').join('') + '</div>'
         : '<div class="gap-tags"><span class="gap-chip ok">no gap — yours</span></div>';
+      const actions = t.routing_state === 'triage_pending' ? triageActionsHtml(t.task_id) : '';
       html += '<div class="triage-item">' + stateBadge
-        + '<div class="triage-main"><div class="triage-title">' + esc(t.title) + '</div>' + gapHtml + '</div>'
+        + '<div class="triage-main"><div class="triage-title">' + esc(t.title) + '</div>' + gapHtml + actions + '</div>'
         + '</div>';
     });
   }
@@ -551,22 +557,81 @@ function renderTriage(data) {
     });
   }
 
+  // ── Settled curriculum (ready — routine, see verification queue) ──
+  if (settled.length) {
+    html += '<div class="triage-section-head" style="margin-top:14px"><span class="triage-dot ready-dot"></span>settled curriculum · ' + settled.length + '</div>';
+    html += '<div class="triage-more">' + settled.length + ' ready tasks — tracked in the verification queue below</div>';
+  }
+
   // ── Needs triage (unclassified) ──
   if (untriaged.length) {
     html += '<div class="triage-section-head" style="margin-top:14px"><span class="triage-dot untriaged-dot"></span>needs triage · ' + untriaged.length + '</div>';
-    untriaged.slice(0, 5).forEach(t => {
+    untriaged.slice(0, 8).forEach(t => {
       html += '<div class="triage-item untriaged-item">'
         + '<span class="badge untriaged">untriaged</span>'
         + '<div class="triage-main"><div class="triage-title">' + esc(t.title) + '</div></div>'
+        + '<button class="triage-btn triage" onclick="triageTask(' + t.task_id + ', this)">triage →</button>'
         + '</div>';
     });
-    if (untriaged.length > 5) {
-      html += '<div class="triage-more">+ ' + (untriaged.length - 5) + ' more — Gyani classifies these on the morning pass</div>';
+    if (untriaged.length > 8) {
+      html += '<div class="triage-more">+ ' + (untriaged.length - 8) + ' more</div>';
     }
   }
 
   body.className = 'panel-body';
   body.innerHTML = html;
+}
+
+function triageActionsHtml(taskId) {
+  const opts = AGENTS.map(a => '<option>' + a + '</option>').join('');
+  return '<div class="triage-actions">'
+    + '<button class="triage-btn learn" onclick="decideTask(' + taskId + ', \'learn\', null, this)">learn</button>'
+    + '<span class="delegate-group">'
+    +   '<select class="triage-agent-select" id="triage-agent-' + taskId + '">' + opts + '</select>'
+    +   '<button class="triage-btn delegate" onclick="decideTask(' + taskId + ', \'delegate\', document.getElementById(\'triage-agent-' + taskId + '\').value, this)">delegate</button>'
+    + '</span>'
+    + '</div>';
+}
+
+async function triageTask(taskId, btn) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'classifying…';
+  try {
+    await fetch('/api/gyani/triage', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_id: taskId}),
+    });
+  } catch (e) {
+    btn.textContent = orig;
+    btn.disabled = false;
+    alert('triage failed: ' + e.message);
+    return;
+  }
+  load();
+}
+
+async function decideTask(taskId, decision, agent, btn) {
+  btn.disabled = true;
+  const body = {task_id: taskId, decision: decision};
+  if (decision === 'delegate') body.agent = agent;
+  try {
+    const resp = await fetch('/api/gyani/triage', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      alert(decision + ' failed: ' + (d.error || d.detail || 'HTTP ' + resp.status));
+      btn.disabled = false;
+      return;
+    }
+  } catch (e) {
+    alert(decision + ' failed: ' + e.message);
+    btn.disabled = false;
+    return;
+  }
+  load();
 }
 
 /* ── main load + render ──────────────────────────────────────── */

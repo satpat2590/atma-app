@@ -352,8 +352,8 @@ async def gyani_curate(request: Request):
                 pri = tsk.get("priority", 3)
                 desc = tsk.get("description", "")
                 cur.execute(
-                    "INSERT INTO tasks (title, category, priority, description, assigned_to, created_by, is_active, created_at) "
-                    "VALUES (%s, 'mental', %s, %s, 1, 1, TRUE, NOW()) RETURNING id",
+                    "INSERT INTO tasks (title, category, priority, description, assigned_to, created_by, is_active, owner_type, routing_state, created_at) "
+                    "VALUES (%s, 'mental', %s, %s, 1, 1, TRUE, 'satyam', 'ready', NOW()) RETURNING id",
                     (title, pri, desc))
                 task_id = cur.fetchone()[0]
                 cur.execute("INSERT INTO task_tags (task_id, tag_id) VALUES (%s, %s)", (task_id, tag_id))

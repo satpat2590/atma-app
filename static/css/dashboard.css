@@ -385,6 +385,61 @@ a.verif-title:hover { color: var(--cyan); text-decoration: underline; }
   color: var(--text-faint);
   padding: 6px 0 2px;
 }
+.triage-dot.ready-dot { background: var(--cyan-dim); }
+
+/* ── triage action controls ─────────────────────────────────── */
+.triage-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  flex-wrap: wrap;
+}
+.triage-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.triage-btn:hover:not(:disabled) { border-color: var(--border-hover); color: var(--text); }
+.triage-btn:disabled { opacity: 0.5; cursor: default; }
+.triage-btn.learn {
+  color: var(--green-dim);
+  border-color: var(--green-faint);
+}
+.triage-btn.learn:hover:not(:disabled) { background: var(--green-faint); color: var(--green); }
+.triage-btn.delegate {
+  color: #bc8cff;
+  border-color: rgba(188,140,255,0.25);
+}
+.triage-btn.delegate:hover:not(:disabled) { background: rgba(188,140,255,0.15); color: #d7bfff; }
+.triage-btn.triage {
+  color: var(--cyan);
+  border-color: var(--cyan-faint);
+  margin-left: auto;
+}
+.triage-btn.triage:hover:not(:disabled) { background: var(--cyan-faint); }
+.delegate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.triage-agent-select {
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  cursor: pointer;
+}
+.triage-agent-select:focus { outline: none; border-color: var(--cyan-dim); }
 
 /* ── habit grid ─────────────────────────────────────────────── */
 #habits-panel .panel-body { padding-bottom: 10px; }
