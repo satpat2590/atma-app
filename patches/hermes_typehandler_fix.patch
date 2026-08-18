@@ -1,0 +1,29 @@
+diff --git a/plugins/platforms/telegram/adapter.py b/plugins/platforms/telegram/adapter.py
+index 6a6fb549c3..aaad8782b8 100644
+--- a/plugins/platforms/telegram/adapter.py
++++ b/plugins/platforms/telegram/adapter.py
+@@ -415,7 +415,7 @@ def check_telegram_requirements() -> bool:
+     """
+     global TELEGRAM_AVAILABLE, Update, Bot, Message, InlineKeyboardButton
+     global InlineKeyboardMarkup, LinkPreviewOptions, Application
+-    global CommandHandler, CallbackQueryHandler, TelegramMessageHandler
++    global CommandHandler, CallbackQueryHandler, TypeHandler, TelegramMessageHandler
+     global ContextTypes, filters, ParseMode, ChatType, HTTPXRequest
+     if TELEGRAM_AVAILABLE:
+         return True
+@@ -436,6 +436,7 @@ def check_telegram_requirements() -> bool:
+             CallbackQueryHandler as _CQH,
+             MessageHandler as _MH,
+             ContextTypes as _CT, filters as _filters,
++            TypeHandler as _TH,
+         )
+         from telegram.constants import ParseMode as _PM, ChatType as _CtT
+         from telegram.request import HTTPXRequest as _HR
+@@ -451,6 +452,7 @@ def check_telegram_requirements() -> bool:
+     CommandHandler = _CH
+     CallbackQueryHandler = _CQH
+     TelegramMessageHandler = _MH
++    TypeHandler = _TH
+     ContextTypes = _CT
+     filters = _filters
+     ParseMode = _PM

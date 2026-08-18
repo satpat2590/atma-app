@@ -17,7 +17,7 @@ Both are pure aggregations of tables already populated by the triage endpoint:
 """
 
 from app.db import _supabase_url
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 import psycopg2
 
@@ -161,3 +161,107 @@ def self_assessment():
         },
         "recent": recent,
     }
+
+
+@router.get("/api/agent/tags/review")
+def tags_review():
+    """List auto-created tags — sprawl candidates for Gyani to consolidate.
+
+    Every tag the triage LLM invented on the fly carries auto_created=TRUE.
+    This surfaces them with reference counts (tasks, signatures, children) so a
+    loose signature can be merged into the real tree instead of fragmenting it.
+    """
+    url = _supabase_url()
+    if not url:
+        return JSONResponse({"error": "no supabase"}, status_code=503)
+    try:
+        con = psycopg2.connect(url, connect_timeout=8)
+        cur = con.cursor()
+        cur.execute(
+            "SELECT t.id, t.name, t.category, "
+            "       (SELECT COUNT(*) FROM task_tags tt WHERE tt.tag_id = t.id) AS task_refs, "
+            "       (SELECT COUNT(*) FROM task_skill_requirements r WHERE r.tag_id = t.id) AS sig_refs, "
+            "       (SELECT COUNT(*) FROM tags c WHERE c.parent_tag_id = t.id) AS children, "
+            "       (SELECT COUNT(*) FROM verifications v WHERE v.tag_id = t.id) AS exam_refs "
+            "FROM tags t WHERE t.auto_created = TRUE ORDER BY t.id"
+        )
+        rows = cur.fetchall()
+        con.close()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    tags = [
+        {"tag_id": r[0], "name": r[1], "category": r[2],
+         "task_refs": r[3], "sig_refs": r[4], "children": r[5], "exam_refs": r[6]}
+        for r in rows
+    ]
+    return {"auto_created": tags, "count": len(tags)}
+
+
+@router.post("/api/agent/tags/merge")
+async def tags_merge(request: Request):
+    """Merge an auto-created tag into an existing one (consolidate sprawl).
+
+    Body: {"from_tag_id": int, "into_tag_id": int}
+    Reassigns every reference from the orphan to the survivor (task_tags,
+    task_skill_requirements, verifications, agent_domains, tag_dependencies,
+    and child-tag parent links), then deletes the orphan.
+    """
+    body = await request.json()
+    from_id = body.get("from_tag_id")
+    into_id = body.get("into_tag_id")
+    if not from_id or not into_id or from_id == into_id:
+        return JSONResponse({"error": "distinct from_tag_id and into_tag_id required"}, status_code=400)
+
+    url = _supabase_url()
+    if not url:
+        return JSONResponse({"error": "no supabase"}, status_code=503)
+
+    try:
+        con = psycopg2.connect(url, connect_timeout=8)
+        cur = con.cursor()
+        cur.execute("SELECT id FROM tags WHERE id IN (%s, %s)", (from_id, into_id))
+        found = {r[0] for r in cur.fetchall()}
+        if from_id not in found or into_id not in found:
+            con.close()
+            return JSONResponse({"error": "one or both tags not found"}, status_code=404)
+
+        # Reassign every reference from -> into, guarding against FK collisions
+        # by deleting the from-side rows where into-side already exists.
+        cur.execute(
+            "DELETE FROM task_tags WHERE tag_id = %s AND task_id IN "
+            "(SELECT task_id FROM task_tags WHERE tag_id = %s)", (from_id, into_id))
+        cur.execute("UPDATE task_tags SET tag_id = %s WHERE tag_id = %s", (into_id, from_id))
+
+        cur.execute(
+            "DELETE FROM task_skill_requirements WHERE tag_id = %s AND task_id IN "
+            "(SELECT task_id FROM task_skill_requirements WHERE tag_id = %s)", (from_id, into_id))
+        cur.execute("UPDATE task_skill_requirements SET tag_id = %s WHERE tag_id = %s", (into_id, from_id))
+
+        cur.execute(
+            "DELETE FROM verifications WHERE tag_id = %s AND task_id IN "
+            "(SELECT task_id FROM verifications WHERE tag_id = %s)", (from_id, into_id))
+        cur.execute("UPDATE verifications SET tag_id = %s WHERE tag_id = %s", (into_id, from_id))
+
+        cur.execute("DELETE FROM agent_domains WHERE tag_id = %s AND agent_id IN "
+                    "(SELECT agent_id FROM agent_domains WHERE tag_id = %s)", (from_id, into_id))
+        cur.execute("UPDATE agent_domains SET tag_id = %s WHERE tag_id = %s", (into_id, from_id))
+
+        cur.execute("DELETE FROM tag_dependencies WHERE tag_id = %s AND depends_on_tag_id = %s", (into_id, from_id))
+        cur.execute("DELETE FROM tag_dependencies WHERE tag_id = %s AND depends_on_tag_id = %s", (from_id, into_id))
+        cur.execute("UPDATE tag_dependencies SET tag_id = %s WHERE tag_id = %s", (into_id, from_id))
+        cur.execute("UPDATE tag_dependencies SET depends_on_tag_id = %s WHERE depends_on_tag_id = %s", (into_id, from_id))
+
+        # Re-parent the orphan's children onto the survivor
+        cur.execute("UPDATE tags SET parent_tag_id = %s WHERE parent_tag_id = %s", (into_id, from_id))
+
+        # Finally delete the orphan
+        cur.execute("DELETE FROM tags WHERE id = %s", (from_id,))
+
+        con.commit()
+        con.close()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    return {"merged": True, "from_tag_id": from_id, "into_tag_id": into_id}
+

@@ -67,15 +67,19 @@ def fetch_atma():
 
     c.execute("""
         SELECT t.id, t.title, t.category, t.priority, t.assigned_to,
+               t.owner_type, t.routing_state,
                array_remove(array_agg(tag.id), NULL) as tag_ids
         FROM tasks t
         LEFT JOIN task_tags tt ON t.id = tt.task_id
         LEFT JOIN tags tag ON tt.tag_id = tag.id
-        GROUP BY t.id, t.title, t.category, t.priority, t.assigned_to
+        GROUP BY t.id, t.title, t.category, t.priority, t.assigned_to,
+                 t.owner_type, t.routing_state
     """)
     tasks = [{"id": r[0], "title": r[1], "category": r[2], "priority": r[3],
               "assigned_to": users.get(r[4], {"name": "?", "type": "unknown"}),
-              "tag_ids": r[5] or []} for r in c.fetchall()]
+              "owner_type": r[5] or "satyam",
+              "routing_state": r[6],
+              "tag_ids": r[7] or []} for r in c.fetchall()]
 
     c.execute("""
         SELECT task_id, count(*), sum(points), max(completed_at)
@@ -116,11 +120,12 @@ def main():
     users, tags, tasks, stats, growth = fetch_atma()
     print(f"  {len(tags)} tags, {len(tasks)} tasks")
 
-    # PERSONAL MAP: Satyam's tasks only. Agent tasks belong to separate
-    # per-agent maps, not the personal growth graph.
+    # PERSONAL MAP: Satyam's tasks only. Agent tasks (owner_type='agent',
+    # i.e. delegated) belong to separate per-agent views, not the personal
+    # growth graph. edoras-category tasks are agent trading output.
     tasks = [t for t in tasks
-             if t["assigned_to"]["name"] == "Satyam"
-             or (t["assigned_to"]["type"] == "unknown" and t["category"] != "edoras")]
+             if (t.get("owner_type") or "satyam") != "agent"
+             and t["category"] != "edoras"]
     print(f"  {len(tasks)} tasks after personal filter (Satyam only)")
 
     tag_by_id = {t["id"]: t for t in tags}
@@ -238,6 +243,8 @@ def main():
             "priority": task["priority"],
             "assigned_to": task["assigned_to"]["name"],
             "assigned_type": task["assigned_to"]["type"],
+            "owner_type": task["owner_type"],
+            "routing_state": task["routing_state"],
             "tag_ids": task["tag_ids"],
             "warmth": round(warmth(s["last"]), 2),
             "growth_score": gs, "score_color": score_color(gs),

@@ -103,7 +103,8 @@
   <div><span class="dot" style="background:#3fb950"></span>growing (28d)</div>
   <div><span class="dot" style="background:#d29922"></span>holding steady</div>
   <div><span class="dot" style="background:#e5534b"></span>slipping</div>
-  <div><span class="dot" style="background:#bc8cff"></span>agent task</div>
+  <div><span class="dot" style="background:#bc8cff"></span>learning gap</div>
+  <div><span class="dot" style="background:#58a6ff"></span>awaiting triage</div>
   <div class="hint">bright = touched recently · dim = dormant<br>hover to trace · click to focus · dashed = cross-field bridge</div>
 </div>
 
@@ -145,7 +146,16 @@ const TIER_FONT= { 0: 13, 1: 14, 2: 12, 3: 10.5, 4: 10 };
 const TIER_LOD = { 0: 0, 1: 0, 2: 0.34, 3: 0.72, 4: 1.5 };
 
 const SCORE_RGB = { green: [63,185,80], amber: [210,153,34], red: [229,83,75] };
+const ROUTING_RGB = { learning_gap: [188,140,255], triage_pending: [88,166,255] };
 function pointColor(n) {
+  // routing state wins for tasks: learning gap (needs prerequisites) or
+  // awaiting a routing decision, regardless of growth score.
+  if (n.type === 'task' && n.routing_state && ROUTING_RGB[n.routing_state]) {
+    return ROUTING_RGB[n.routing_state];
+  }
+  if (n.type === 'task' && (n.owner_type === 'agent' || n.assigned_type === 'agent')) {
+    return [188,140,255];
+  }
   // growth-score driven color (SPEC-growth-system-revamp-2026-08)
   if (n.score_color && SCORE_RGB[n.score_color]) {
     if (n.type === 'task' && n.assigned_type === 'agent') return [188,140,255];
@@ -551,6 +561,11 @@ function showDetail(n) {
   if (n.type === 'task') {
     const cls = n.points > 0 ? 'pos' : n.points < 0 ? 'neg' : 'neu';
     rows.push(['assigned to', `${n.assigned_to}${n.assigned_type === 'agent' ? ' (agent)' : ''}`]);
+    if (n.routing_state) {
+      const rlabel = { learning_gap: 'learning gap', triage_pending: 'awaiting triage',
+                       ready: 'ready', delegated: 'delegated' }[n.routing_state] || n.routing_state;
+      rows.push(['routing', rlabel]);
+    }
     rows.push(['points', `<span class="${cls}">${n.points > 0 ? '+' : ''}${n.points}</span>`]);
     rows.push(['completions', n.completions ?? 0]);
     if (n.priority != null) rows.push(['priority', n.priority]);

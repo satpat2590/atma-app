@@ -107,8 +107,8 @@ def _ensure_tag(con, cur, name, category_hint):
         return row[0]
     cat = category_hint if category_hint in ("mental", "physical", "financial") else "mental"
     cur.execute(
-        "INSERT INTO tags (name, parent_tag_id, category, required_proficiency, created_at) "
-        "VALUES (%s, NULL, %s, 3.0, NOW()) RETURNING id",
+        "INSERT INTO tags (name, parent_tag_id, category, required_proficiency, auto_created, created_at) "
+        "VALUES (%s, NULL, %s, 3.0, TRUE, NOW()) RETURNING id",
         (name, cat),
     )
     return cur.fetchone()[0]
