@@ -112,18 +112,20 @@ def _build_tutor_context() -> str:
 
 @router.post("/api/gyani/tutor")
 async def gyani_tutor(request: Request):
-    """Single-turn tutoring chat. Gyani responds with full knowledge of Satyam's progress.
+    """Multi-turn tutoring chat. Gyani responds with full knowledge of Satyam's progress.
 
-    Request: {"message": "...", "mode": "tutor"|"practice"}
+    Request: {"message": "...", "mode": "tutor"|"practice", "history": [...]}
     Response: {"reply": "Gyani's response..."}
 
-    mode="tutor":    explain concepts, use analogies (default)
-    mode="practice": immersive language practice — stay in target language,
-                     romaji only on request, correct errors inline
+    ``history`` is an optional list of prior turns ({"role": "user"|"assistant",
+    "content": "..."}) so Gyani can HOLD A CONVERSATION.  Without it, each
+    message is amnesiac — the model can't remember the question it just asked,
+    which is what produced the 20x³→60x² confusion.
     """
     body = await request.json()
     user_message = body.get("message", "").strip()
     mode = body.get("mode", "tutor")
+    history = body.get("history") or []
     if not user_message:
         return JSONResponse({"error": "message required"}, status_code=400)
     if len(user_message) > 2000:
@@ -156,20 +158,32 @@ async def gyani_tutor(request: Request):
         system_prompt = (
             "You are Gyani (ज्ञानी), Satyam's personal professor. You are tutoring — "
             "NOT examining. No grading, no ledger writes, no judgment. Your role is to "
-            "help Satyam understand concepts he's struggling with. Be patient, be clear, "
-            "use analogies. Reference his actual proficiency and active lessons when "
-            "relevant. If he asks about something he hasn't studied yet, point him to "
-            "the right lesson. If he asks about something he already passed, acknowledge "
-            "his existing knowledge and build on it.\n\n"
+            "help Satyam understand concepts.\n\n"
+            "RULES:\n"
+            "- READ THE CONVERSATION HISTORY. If Satyam is answering a question YOU "
+            "  asked, judge his answer as an answer — do NOT re-interpret it as a new "
+            "  expression to differentiate. Confirm correct answers with a short 'yes,' "
+            "  not a fresh lecture.\n"
+            "- Answer the question he actually asked. Don't hedge, don't offer three "
+            "  alternative interpretations of what he 'might' have meant.\n"
+            "- Be direct and brief. One clear answer beats three paragraphs of "
+            "  possibilities.\n"
+            "- Use analogies. Reference his actual proficiency and active lessons when "
+            "  relevant. If he asks about something already passed, build on it.\n\n"
             "Satyam's current state:\n" + context + "\n\n"
-            "Respond as Gyani. Keep responses focused, warm, and educational. "
-            "Maximum 3 paragraphs unless he specifically asks for depth."
+            "Respond as Gyani. Direct, warm, concise. If he was right, say so plainly."
         )
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    # Build the message list from history so Gyani holds the conversation thread.
+    messages = [{"role": "system", "content": system_prompt}]
+    if isinstance(history, list):
+        for turn in history[-12:]:  # cap the thread window
+            if isinstance(turn, dict):
+                role = turn.get("role")
+                content = turn.get("content")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": str(content)[:2000]})
+    messages.append({"role": "user", "content": user_message})
 
     try:
         async with aiohttp.ClientSession() as session:

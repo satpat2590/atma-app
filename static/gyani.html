@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ज्ञानी · Gyani</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root {
+    --bg: #040705;
+    --bg-2: #071009;
+    --panel: rgba(6, 18, 10, 0.82);
+    --line: #103820;
+    --line-soft: #0c2a18;
+    --grn: #39ff6a;
+    --grn-dim: #4a9a5a;
+    --grn-deep: #1e3a1e;
+    --grn-faint: #2f5f3a;
+    --amb: #ffb86c;
+    --red: #ff5555;
+    --wht: #e8f5ec;
+    --mono: "SF Mono", "JetBrains Mono", "Cascadia Code", ui-monospace, Menlo, Consolas, monospace;
+    --glow: 0 0 14px rgba(57, 255, 106, 0.45);
+    --glow-soft: 0 0 8px rgba(57, 255, 106, 0.25);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: radial-gradient(ellipse at 50% -12%, #061a0c 0%, var(--bg) 58%) fixed;
+    color: var(--grn-dim);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.55;
+    overflow: hidden;
+  }
+
+  /* scanline + vignette atmosphere — CRT phosphor */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1000;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.24) 0 1px, transparent 1px 3px);
+    mix-blend-mode: multiply;
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1001;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.5) 100%);
+  }
+
+  .shell {
+    height: 100vh; display: grid;
+    grid-template-columns: 300px 1fr; grid-template-rows: 1fr;
+  }
+
+  /* ── Sidebar — the living skill tree ─────────────────────── */
+  .side {
+    background: linear-gradient(180deg, rgba(4,14,7,.9), rgba(3,8,5,.94));
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 0;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .brand {
+    padding: 26px 24px 20px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .brand .glyph {
+    font-size: 44px; line-height: 1; color: var(--grn);
+    text-shadow: var(--glow);
+    letter-spacing: 2px;
+    animation: breathe 4.5s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { text-shadow: 0 0 14px rgba(57,255,106,.45); }
+    50% { text-shadow: 0 0 26px rgba(57,255,106,.75), 0 0 60px rgba(57,255,106,.25); }
+  }
+  .brand .wordmark {
+    margin-top: 8px; font-size: 12px; letter-spacing: 6px;
+    text-transform: uppercase; color: var(--wht);
+  }
+  .brand .wordmark .u { color: var(--grn); text-shadow: var(--glow-soft); }
+  .brand .sub { margin-top: 4px; font-size: 11px; color: var(--grn-faint); }
+
+  .tree-head {
+    padding: 14px 24px 10px;
+    font-size: 10px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--grn-faint);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .tree-head .count { font-size: 10px; color: var(--grn-dim); }
+
+  .tree {
+    flex: 1; overflow-y: auto; min-height: 0; padding: 4px 12px 20px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .tree::-webkit-scrollbar { width: 5px; }
+  .tree::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  .node {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 8px;
+    position: relative;
+    transition: background .18s ease, border-color .18s ease;
+    border: 1px solid transparent;
+    cursor: default;
+  }
+  .node:hover { background: rgba(57,255,106,.04); }
+  .node .branch {
+    position: absolute; left: 3px; top: -6px; bottom: 50%;
+    width: 1px; background: var(--line-soft);
+  }
+  .node .bar {
+    width: 4px; align-self: stretch; min-height: 22px; border-radius: 2px;
+    background: var(--grn-deep);
+    transition: background .3s ease, box-shadow .3s ease;
+  }
+  .node.unlocked .bar { background: var(--grn); box-shadow: var(--glow-soft); }
+  .node.current .bar { background: var(--amb); box-shadow: 0 0 8px rgba(255,184,108,.5); }
+  .node .lbl { font-size: 12.5px; color: var(--grn-faint); transition: color .18s ease; }
+  .node.unlocked .lbl { color: var(--grn-dim); }
+  .node.current .lbl { color: var(--wht); }
+  .node .prof { margin-left: auto; font-size: 10px; color: var(--grn-faint); font-variant-numeric: tabular-nums; }
+  .node.unlocked .prof { color: var(--grn); }
+  .node .lock { font-size: 10px; color: var(--grn-deep); margin-left: auto; }
+  .node.locked { opacity: .55; }
+
+  /* rail — personal state */
+  .rail {
+    border-top: 1px solid var(--line-soft); padding: 16px 24px 20px;
+    font-size: 11px; color: var(--grn-faint); line-height: 2;
+  }
+  .rail .rlabel {
+    display: block; font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+    color: var(--grn-faint); margin-bottom: 8px;
+  }
+  .rail .row { display: flex; justify-content: space-between; }
+  .rail .row b { color: var(--grn-dim); font-weight: normal; }
+  .rail .dotline { display: flex; gap: 4px; margin-top: 2px; }
+  .rail .warn { color: var(--amb); }
+
+  /* ── Main — the dialogue ─────────────────────────────────── */
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: transparent; }
+
+  .topbar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 15px 26px; border-bottom: 1px solid var(--line-soft);
+  }
+  .presence { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--grn-dim); letter-spacing: 1px; }
+  .presence .pulse {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--grn);
+    box-shadow: var(--glow-soft); animation: pbtn 2.2s infinite;
+  }
+  @keyframes pbtn { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
+  .mode-group { margin-left: auto; display: flex; gap: 6px; }
+  .mode {
+    padding: 7px 18px; border-radius: 20px; font-size: 11px; letter-spacing: 1.5px;
+    text-transform: uppercase; border: 1px solid var(--line); background: transparent;
+    color: var(--grn-faint); cursor: pointer; font-family: var(--mono);
+    transition: all .16s ease;
+  }
+  .mode:hover { color: var(--grn-dim); border-color: var(--grn-deep); }
+  .mode.active {
+    background: var(--grn); color: #03150a; border-color: var(--grn);
+    box-shadow: var(--glow-soft); font-weight: 700;
+  }
+
+  .chat {
+    flex: 1; overflow-y: auto; min-height: 0; padding: 28px 32px;
+    display: flex; flex-direction: column; gap: 16px;
+    scroll-behavior: smooth;
+  }
+  .chat::-webkit-scrollbar { width: 6px; }
+  .chat::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  .msg { display: flex; flex-direction: column; gap: 5px; max-width: 76%; animation: rise .24s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+  .msg .who { font-size: 9.5px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--grn-deep); }
+  .msg .body {
+    padding: 13px 17px; border-radius: 12px; line-height: 1.6;
+    word-break: break-word; font-size: 13.5px;
+  }
+  /* markdown inside message bodies */
+  .msg .body p { margin: 0 0 8px; }
+  .msg .body p:last-child { margin-bottom: 0; }
+  .msg .body strong { color: var(--wht); }
+  .msg .body em { color: var(--grn); }
+  .msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4 {
+    color: var(--grn); font-weight: 600; margin: 12px 0 6px; line-height: 1.3;
+  }
+  .msg .body h1 { font-size: 16px; } .msg .body h2 { font-size: 15px; }
+  .msg .body h3 { font-size: 14px; } .msg .body h4 { font-size: 13.5px; }
+  .msg .body ul, .msg .body ol { margin: 6px 0 8px; padding-left: 20px; }
+  .msg .body li { margin: 2px 0; }
+  .msg .body code {
+    font-family: var(--mono); font-size: 12px;
+    background: rgba(57,255,106,.08); color: var(--grn);
+    padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line-soft);
+  }
+  .msg .body pre {
+    background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 14px; margin: 8px 0; overflow-x: auto;
+  }
+  .msg .body pre code { background: none; border: none; padding: 0; font-size: 12px; }
+  .msg .body blockquote {
+    border-left: 2px solid var(--grn); padding-left: 12px; margin: 8px 0;
+    color: var(--grn-dim);
+  }
+  .msg .body a { color: var(--grn); text-decoration: underline; }
+  .msg .body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+  .msg .body th, .msg .body td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+  .msg .body th { color: var(--grn); background: rgba(57,255,106,.05); }
+  .msg .body hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
+  /* KaTeX math */
+  .msg .body .katex { font-size: 1.05em; color: var(--grn); }
+  .msg .body .katex-display { margin: 10px 0; padding: 4px 0; overflow-x: auto; overflow-y: hidden; }
+  .msg .body .katex-display > .katex { white-space: normal; }
+  .msg.gyani { align-self: flex-start; }
+  .msg.gyani .who { color: var(--grn); }
+  .msg.gyani .body {
+    background: var(--panel); border: 1px solid var(--line);
+    color: var(--grn-dim);
+  }
+  .msg.you { align-self: flex-end; }
+  .msg.you .who { text-align: right; color: var(--grn-faint); }
+  .msg.you .body {
+    background: rgba(20, 42, 26, .9); border: 1px solid #204a2c;
+    color: var(--wht);
+    white-space: pre-wrap;   /* user messages are plain text — keep line breaks */
+  }
+  .msg.sys { align-self: center; }
+  .msg.sys .body {
+    background: transparent; border: 1px dashed var(--line-soft);
+    color: var(--grn-faint); font-size: 11.5px; text-align: center; letter-spacing: .5px;
+  }
+  .msg.level { align-self: center; }
+  .msg.level .body {
+    background: rgba(255,184,108,.05); border: 1px solid rgba(255,184,108,.35);
+    color: var(--amb); font-size: 10.5px; letter-spacing: 2.5px; text-transform: uppercase;
+  }
+
+  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 6px 0; }
+  .typing span {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--grn);
+    animation: tp 1.2s infinite;
+  }
+  .typing span:nth-child(2) { animation-delay: .18s; }
+  .typing span:nth-child(3) { animation-delay: .36s; }
+  @keyframes tp { 0%,60%,100% { opacity: .2; transform: translateY(0) } 30% { opacity: 1; transform: translateY(-3px) } }
+
+  .inputs {
+    padding: 16px 26px 20px; border-top: 1px solid var(--line-soft);
+    display: flex; gap: 12px;
+  }
+  .inputs textarea {
+    flex: 1; resize: none; height: 54px;
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px;
+    color: var(--wht); font-family: var(--mono); font-size: 13.5px;
+    padding: 14px 16px; outline: none; transition: border-color .16s ease, box-shadow .16s ease;
+  }
+  .inputs textarea:focus { border-color: var(--grn); box-shadow: var(--glow-soft); }
+  .inputs textarea::placeholder { color: var(--grn-deep); }
+  .inputs button {
+    width: 56px; border: none; border-radius: 12px; background: var(--grn);
+    color: #03150a; font-size: 18px; cursor: pointer; box-shadow: var(--glow-soft);
+    transition: transform .12s ease, opacity .12s;
+  }
+  .inputs button:hover { transform: translateY(-1px); }
+  .inputs button:disabled { opacity: .35; cursor: not-allowed; }
+
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+    .side { display: none; }
+    .msg { max-width: 92%; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">
+      <div class="glyph">ज्ञानी</div>
+      <div class="wordmark">G<span class="u">y</span>ani</div>
+      <div class="sub">your guide up the skill tree</div>
+    </div>
+
+    <div class="tree-head">
+      <span>skill tree</span><span class="count" id="tree-count"></span>
+    </div>
+    <div class="tree" id="tree"><div class="msg sys"><div class="body">growing…</div></div></div>
+
+    <div class="rail" id="rail">
+      <span class="rlabel">how you're doing today</span>
+      <div class="row"><span>body · recovery</span><b id="r-recovery">—</b></div>
+      <div class="row"><span>mind · last wrote</span><b id="r-obsidian">—</b></div>
+      <div class="row"><span>ship · commits</span><b id="r-git">—</b></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="presence"><span class="pulse"></span><span id="presence-text">Gyani · ready</span></div>
+      <div class="mode-group">
+        <button class="mode active" data-mode="tutor" onclick="setMode('tutor')">tutor</button>
+        <button class="mode" data-mode="exam" onclick="setMode('exam')">exam</button>
+      </div>
+    </div>
+
+    <div class="chat" id="chat"></div>
+
+    <div class="inputs">
+      <textarea id="input" placeholder="Ask Gyani anything…" onkeydown="onKey(event)"></textarea>
+      <button id="send" onclick="send()">➤</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const CHAT = document.getElementById('chat');
+  const INPUT = document.getElementById('input');
+  const SEND = document.getElementById('send');
+  const PRESENCE = document.getElementById('presence-text');
+
+  let mode = 'tutor';
+  let exam = null;
+  let history = [];   // conversation thread for the tutor (restored below)
+
+  const esc = s => (s || '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function renderMarkdown(md) {
+    // Pipeline: extract math → placeholder → marked → sanitize → inject KaTeX.
+    // Math is pulled out FIRST so marked never sees the backslashes/underscores
+    // (which it would mangle).  The model emits \(...\) and \[...\].
+    try {
+      const mathBlocks = [];
+      const stash = (tex, display) => {
+        const key = '@@GYANIMATH' + mathBlocks.length + '@@';
+        // trim surrounding newlines/whitespace — the model pads \[ \] with \n,
+        // and a bare \n inside math renders as red error text in KaTeX
+        mathBlocks.push({ tex: tex.trim(), display });
+        return key;
+      };
+      // display first (\[...\], $$...$$), then inline (\(...\))
+      let work = String(md || '')
+        .replace(/\\\[([\s\S]+?)\\\]/g, (m, tex) => stash(tex, true))
+        .replace(/\$\$([\s\S]+?)\$\$/g, (m, tex) => stash(tex, true))
+        .replace(/\\\(([\s\S]+?)\\\)/g, (m, tex) => stash(tex, false));
+
+      let html = marked.parse(work, { gfm: true, breaks: false });
+      html = DOMPurify.sanitize(html);
+
+      // inject KaTeX-rendered math back in (after sanitize, since KaTeX output
+      // is trusted generated HTML and sanitize would strip it)
+      mathBlocks.forEach((b, i) => {
+        let rendered;
+        try {
+          rendered = katex.renderToString(b.tex, {
+            displayMode: b.display, throwOnError: false,
+          });
+        } catch (e) {
+          rendered = '<code>' + esc(b.tex) + '</code>';
+        }
+        html = html.split('@@GYANIMATH' + i + '@@').join(rendered);
+      });
+      return html;
+    } catch (e) {
+      return esc(md);
+    }
+  }
+
+  function add(who, text, kind) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + (kind || who);
+    const label = who === 'you' ? 'you' : who === 'sys' ? '' : (who === 'level' ? '' : 'gyani');
+    // User messages stay escaped (plain text); Gyani/system/level get markdown.
+    const content = (who === 'you') ? esc(text) : renderMarkdown(text);
+    d.innerHTML = '<div class="who">' + label + '</div><div class="body">' + content + '</div>';
+    CHAT.appendChild(d);
+    CHAT.scrollTop = CHAT.scrollHeight;
+    return d;
+  }
+
+  function showTyping() {
+    const d = document.createElement('div');
+    d.className = 'typing';
+    d.innerHTML = '<span></span><span></span><span></span>';
+    CHAT.appendChild(d);
+    CHAT.scrollTop = CHAT.scrollHeight;
+    return d;
+  }
+
+  function setMode(m) {
+    mode = m;
+    if (m === 'exam') history = [];   // don't carry tutor chatter into the exam
+    document.querySelectorAll('.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+    INPUT.placeholder = m === 'exam'
+      ? 'Type "test me" to begin an exam…'
+      : 'Ask Gyani anything…';
+    add('sys', m === 'exam'
+      ? 'EXAM MODE · Gyani grades only inside an explicit exam. Say "test me" or "ready".'
+      : 'TUTOR MODE · safe practice, never graded.', 'sys');
+    INPUT.focus();
+  }
+
+  async function send() {
+    const text = INPUT.value.trim();
+    if (!text) return;
+    INPUT.value = '';
+    add('you', text);
+    SEND.disabled = true;
+    PRESENCE.textContent = 'Gyani · thinking…';
+    const t = showTyping();
+    try {
+      if (mode === 'exam') await examFlow(text);
+      else await tutorFlow(text);
+    } catch (e) {
+      add('sys', '⚠ ' + e.message, 'sys');
+    } finally {
+      t.remove(); SEND.disabled = false; PRESENCE.textContent = 'Gyani · ready';
+    }
+  }
+
+  async function tutorFlow(text) {
+    if (/test me|ready|exam time|verify me/i.test(text)) { await startExam(); return; }
+    history.push({ role: 'user', content: text });
+    const r = await post('/api/gyani/tutor', { message: text, mode: 'tutor', history });
+    history.push({ role: 'assistant', content: r.reply });
+    if (history.length > 24) history = history.slice(-24);
+    add('gyani', r.reply);
+  }
+
+  async function examFlow(text) {
+    if (exam === null) {
+      if (/test me|ready|exam time|verify me|start/i.test(text)) await startExam();
+      else add('gyani', 'Say "test me" to begin — or tell me the topic you want to be examined on.');
+      return;
+    }
+    const r = await post('/api/gyani/exam/answer', { verification_id: exam.verification_id, answer: text });
+
+    if (r.action === 'pass' || r.action === 'fail') {
+      exam = null;
+      if (r.action === 'pass') {
+        add('level', 'PASSED · quality ' + r.quality + '/5', 'level');
+        add('gyani', 'You passed, Satyam.' + (r.note ? ' ' + r.note : '') +
+          (r.unlocked && r.unlocked.length ? '\n\n🔓 Unlocked: ' + r.unlocked.map(u => u.name).join(', ') : ''));
+        loadTree();
+      } else {
+        add('level', 'FAILED · reached level ' + r.level_reached, 'level');
+        add('gyani', 'Not this time.' + (r.note ? ' ' + r.note : '') + '\n\nStudy and come back — the harder lesson waits.');
+      }
+    } else if (r.action === 'probe') {
+      add('gyani', r.question + (r.note ? '\n\n' + r.note : ''));
+    } else {
+      exam.level = r.level;
+      add('level', 'level ' + r.level + ' / 4', 'level');
+      add('gyani', (r.note ? r.note + '\n\n' : '') + r.question);
+    }
+  }
+
+  async function startExam() {
+    PRESENCE.textContent = 'Gyani · designing exam…';
+    const r = await post('/api/gyani/exam/start', { topic: 'pick the concept I most need next from my curriculum' });
+    exam = { verification_id: r.verification_id, level: r.level };
+    add('level', 'EXAM BEGIN · ' + r.topic, 'level');
+    add('gyani', r.question);
+  }
+
+  async function post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || data.detail || 'request failed');
+    return data;
+  }
+
+  function onKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }
+
+  async function loadTree() {
+    const el = document.getElementById('tree');
+    try {
+      const r = await fetch('/api/gyani/tree').then(r => r.json());
+      const nodes = r.nodes || [];
+      document.getElementById('tree-count').textContent = nodes.length + ' nodes';
+      el.innerHTML = '';
+      if (!nodes.length) { el.innerHTML = '<div class="msg sys"><div class="body">empty tree</div></div>'; return; }
+
+      // compute depth by walking parents, so the list reads as a real tree
+      const byId = {}; nodes.forEach(n => byId[n.id] = n);
+      const depth = id => { let d = 0, cur = byId[id]; while (cur && cur.parent) { d++; cur = byId[cur.parent]; } return d; };
+
+      nodes.forEach(n => {
+        const d = document.createElement('div');
+        const cls = n.unlocked ? 'unlocked' : 'locked';
+        d.className = 'node ' + cls;
+        const lvl = depth(n.id);
+        const prof = (n.proficiency || 0);
+        const pct = n.required ? Math.min(100, Math.round(prof / n.required * 100)) : 0;
+        d.style.paddingLeft = (12 + lvl * 20) + 'px';
+        if (lvl > 0) {
+          // branch connector on indented nodes
+          const br = document.createElement('span');
+          br.className = 'branch';
+          br.style.left = (10 + (lvl - 1) * 20) + 'px';
+          d.appendChild(br);
+        }
+        d.innerHTML =
+          '<span class="bar" ' + (n.unlocked ? 'style="height:' + Math.max(14, pct) + '%"' : '') + '></span>' +
+          '<span class="lbl">' + esc(n.name) + '</span>' +
+          (n.unlocked
+            ? '<span class="prof">' + prof.toFixed(1) + '</span>'
+            : '<span class="lock">🔒</span>');
+        d.title = n.unlocked
+          ? n.name + ' — proficiency ' + prof.toFixed(1) + ' / ' + n.required
+          : n.name + ' — locked (needs parent proficiency ' + n.required + ')';
+        el.appendChild(d);
+      });
+    } catch (e) { el.innerHTML = '<div class="msg sys"><div class="body">tree unavailable</div></div>'; }
+  }
+
+  async function loadRail() {
+    const fmt = {
+      whoop:  v => v ? v.replace('WHOOP recovery ', '') : '—',
+      obsidian: v => v ? v.replace('Obsidian last note ', '').replace(' (today=', ' · wrote ').replace(')', '') + ' ago' : '—',
+      git:    v => v ? v.replace('git ', '').replace(' commit(s)', ' commits').replace(' in ', ' · ') : '—',
+    };
+    try {
+      const r = await fetch('/api/gyani/context').then(r => r.json());
+      const s = r.sources || {};
+      set('r-recovery', s.whoop, fmt.whoop);
+      set('r-obsidian', s.obsidian, fmt.obsidian);
+      set('r-git', s.git, fmt.git);
+    } catch (e) {}
+  }
+  function set(id, raw, f) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const val = f(raw);
+    const isWarn = id === 'r-recovery' && raw && /[0-9]+/.test(raw) && parseInt(raw.replace(/\D/g,'')) < 40;
+    el.innerHTML = isWarn ? '<span class="warn">' + esc(val) + ' ⚠</span>' : esc(val);
+  }
+
+  add('gyani', 'नमस्ते, Satyam. I am Gyani — your guide up the skill tree.\n\nAsk me anything, or switch to EXAM and say "test me" to prove what you know and unlock what comes next.');
+  loadTree();
+  loadRail();
+</script>
+</body>
+</html>

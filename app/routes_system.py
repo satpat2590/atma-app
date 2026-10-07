@@ -42,3 +42,7 @@ def index():
 @router.get("/mindmap")
 def mindmap_page():
     return FileResponse(STATIC / "mindmap.html")
+
+@router.get("/gyani")
+def gyani_page():
+    return FileResponse(STATIC / "gyani.html")

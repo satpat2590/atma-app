@@ -241,6 +241,87 @@ def gyani_verifications():
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=503)
 
+@router.get("/api/gyani/context")
+def gyani_context():
+    """The personalization rail as structured state (WHOOP/Obsidian/git)."""
+    from engine import context
+
+    return {"sources": {s.key: s.fn() for s in context.DEFAULT_SOURCES}}
+
+
+@router.get("/api/gyani/tree")
+def gyani_tree():
+    """The knowledge DAG as a flat node list with unlock + proficiency state.
+
+    Powers the skill-tree sidebar.  Each node: id, name, parent, required
+    proficiency, current proficiency, unlocked (bool).  Unlock mirrors the
+    logic in /api/gyani/verifications: a node is unlocked when its parent has
+    reached the required proficiency (roots always unlocked).
+    """
+    from engine.db import connect
+
+    try:
+        with connect() as con:
+            cur = con.cursor()
+            cur.execute("SELECT id, name, parent_tag_id, category, required_proficiency FROM tags ORDER BY id")
+            tag_rows = cur.fetchall()
+            cur.execute(
+                "SELECT tag_id, ROUND(AVG(quality)::numeric, 2) FROM verifications "
+                "WHERE state = 'passed' AND tag_id IS NOT NULL GROUP BY tag_id"
+            )
+            prof = {r[0]: float(r[1]) for r in cur.fetchall()}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
+
+    index = {r[0]: {"name": r[1], "parent": r[2], "category": r[3],
+                    "required": float(r[4] or 3.0)} for r in tag_rows}
+
+    # Depth-first preorder so each child nests visually under its own parent
+    # (a BFS/sort-by-parent would group all children together and read flat).
+    children: dict[int, list[int]] = {}
+    for tid, meta in index.items():
+        pid = meta["parent"]
+        if pid is None:
+            continue
+        children.setdefault(pid, []).append(tid)
+    for kids in children.values():
+        kids.sort()
+
+    ordered: list[int] = []
+    seen: set[int] = set()
+
+    def walk(tid: int) -> None:
+        if tid in seen:
+            return
+        seen.add(tid)
+        ordered.append(tid)
+        for kid in children.get(tid, []):
+            walk(kid)
+
+    for tid in index:
+        if index[tid]["parent"] is None:
+            walk(tid)
+    # Any remaining unseen nodes have a broken/forward parent link — emit them
+    # as-is (orphans) so they still appear rather than vanish.
+    for tid in index:
+        walk(tid)
+
+    nodes = []
+    for tid in ordered:
+        meta = index[tid]
+        if meta["parent"] is None:
+            unlocked = True
+        else:
+            parent_prof = prof.get(meta["parent"], 0.0)
+            unlocked = parent_prof >= meta["required"]
+        nodes.append({
+            "id": tid, "name": meta["name"], "parent": meta["parent"],
+            "category": meta["category"], "required": meta["required"],
+            "proficiency": prof.get(tid, 0.0), "unlocked": unlocked,
+        })
+    return {"nodes": nodes}
+
+
 @router.get("/api/gyani/habits")
 def gyani_habits():
     """7-day habit grid: workout, reading, shipping."""
